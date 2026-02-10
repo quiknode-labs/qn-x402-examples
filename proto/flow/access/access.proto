@@ -1,0 +1,42 @@
+// Minimal Flow Access API definition for x402 gRPC-Web demo.
+// Only includes methods used in the example: Ping, GetLatestBlock, SubscribeBlocksFromLatest.
+// See full spec: https://github.com/onflow/flow/blob/master/protobuf/flow/access/access.proto
+
+syntax = "proto3";
+
+package flow.access;
+
+import "flow/entities/block.proto";
+
+service AccessAPI {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc GetLatestBlock(GetLatestBlockRequest) returns (BlockResponse);
+  rpc SubscribeBlocksFromLatest(SubscribeBlocksFromLatestRequest) returns (stream SubscribeBlocksResponse);
+}
+
+message PingRequest {}
+message PingResponse {}
+
+message GetLatestBlockRequest {
+  bool is_sealed = 1;
+  bool full_block_response = 2;
+}
+
+message BlockResponse {
+  flow.entities.Block block = 1;
+}
+
+enum BlockStatus {
+  BLOCK_UNKNOWN = 0;
+  BLOCK_FINALIZED = 1;
+  BLOCK_SEALED = 2;
+}
+
+message SubscribeBlocksFromLatestRequest {
+  BlockStatus block_status = 1;
+  bool full_block_response = 2;
+}
+
+message SubscribeBlocksResponse {
+  flow.entities.Block block = 1;
+}

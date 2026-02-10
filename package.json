@@ -1,0 +1,33 @@
+{
+  "name": "qn-x402-example",
+  "version": "1.0.0",
+  "description": "End-to-end example demonstrating SIWE + JWT auth with x402 payment handling",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx bootstrap.ts",
+    "start:jsonrpc": "tsx jsonrpc.ts",
+    "start:grpc": "tsx grpc.ts",
+    "start:rest": "tsx rest.ts",
+    "start:ws": "tsx websocket.ts",
+    "generate": "buf generate"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.11.0",
+    "@connectrpc/connect": "^2.1.1",
+    "@connectrpc/connect-node": "^2.1.1",
+    "@connectrpc/connect-web": "^2.1.1",
+    "@x402/evm": "^2.0.0",
+    "@x402/fetch": "^2.0.0",
+    "dotenv": "^16.6.1",
+    "siwe": "^2.3.2",
+    "viem": "^2.44.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.65.0",
+    "@bufbuild/protoc-gen-es": "^2.11.0",
+    "@types/node": "^22.19.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
