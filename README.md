@@ -1,4 +1,4 @@
-# Example
+# Examples for using Quicknode Core Node API via x402 + SIWE / SIWX
 
 End-to-end demonstrations of the x402 payment protocol with SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports both **EVM** (Base Sepolia) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet USDC (EVM only), and makes paid requests.
 
