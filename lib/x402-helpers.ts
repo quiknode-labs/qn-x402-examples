@@ -1,8 +1,13 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createKeyPairSignerFromBytes } from '@solana/signers';
 import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
 import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from '@x402/fetch';
+import { ExactSvmScheme } from '@x402/svm';
+import bs58 from 'bs58';
 import { config } from 'dotenv';
 import { generateNonce, SiweMessage } from 'siwe';
+import nacl from 'tweetnacl';
 import { createWalletClient, formatUnits, type Hex, http, type WalletClient } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
@@ -16,13 +21,17 @@ export const USDC_CONTRACT_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e
 export const USDC_DECIMALS = 6;
 export const MIN_USDC_BALANCE = BigInt(10000); // $0.01 = 10000 raw units
 
-export const X402_BASE_URL = 'https://x402.quicknode.com';
+export const X402_BASE_URL = process.env.X402_BASE_URL || 'https://x402.quicknode.com';
 export const X402_AUTH_URL = `${X402_BASE_URL}/auth`;
 export const X402_CREDITS_URL = `${X402_BASE_URL}/credits`;
 export const X402_DRIP_URL = `${X402_BASE_URL}/drip`;
 
 export const BASE_SEPOLIA_CAIP2 = 'eip155:84532';
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
+export const SOLANA_DEVNET_CAIP2 = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+export const SOLANA_DEVNET_CHAIN_REF = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+
+export type ChainType = 'evm' | 'solana';
 
 export const SIWX_STATEMENT =
   'I accept the Quicknode Terms of Service: https://www.quicknode.com/terms';
@@ -56,7 +65,7 @@ export function createTokenRef(): TokenRef {
 export function getOrCreatePrivateKey(): Hex {
   if (existsSync(ENV_FILE)) {
     const envContent = readFileSync(ENV_FILE, 'utf8');
-    const match = envContent.match(/PRIVATE_KEY=(.+)/);
+    const match = envContent.match(/^PRIVATE_KEY=(.+)/m);
     if (match?.[1]) {
       console.log('   Loaded existing wallet from .env');
       return match[1].trim() as Hex;
@@ -64,7 +73,9 @@ export function getOrCreatePrivateKey(): Hex {
   }
 
   const privateKey = generatePrivateKey();
-  writeFileSync(ENV_FILE, `PRIVATE_KEY=${privateKey}\n`);
+  const existingContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
+  const separator = existingContent && !existingContent.endsWith('\n') ? '\n' : '';
+  writeFileSync(ENV_FILE, `${existingContent}${separator}PRIVATE_KEY=${privateKey}\n`);
   console.log('   Generated new wallet and saved to .env');
   return privateKey;
 }
@@ -301,14 +312,14 @@ export async function ensureFunded(address: string, tokenRef: TokenRef): Promise
       const gotBalance = await waitForBalance(address, MIN_USDC_BALANCE);
       if (!gotBalance) {
         console.log('\n   Timed out waiting for faucet funds.');
-        console.log(`   Visit https://faucet.circle.com/ to manually fund your wallet: ${address}`);
+        console.log(`   Wallet address: ${address}`);
         process.exit(1);
       }
       usdcBalance = await getUsdcBalanceRaw(address);
       console.log(`   Updated USDC balance: ${formatUnits(usdcBalance, USDC_DECIMALS)} USDC`);
     } else {
       console.log('\n   Could not get funds from faucet.');
-      console.log(`   Visit https://faucet.circle.com/ to manually fund your wallet: ${address}`);
+      console.log(`   Fund manually: ${address}`);
       process.exit(1);
     }
   }
@@ -323,7 +334,208 @@ export function createWebSocket(network: string, tokenRef: TokenRef): WebSocket 
   return new WebSocket(wsUrl);
 }
 
-// ── x402 Fetch ───────────────────────────────────────────
+// ── Chain Detection ───────────────────────────────────────
+export function detectChainType(): ChainType {
+  if (existsSync(ENV_FILE)) {
+    const envContent = readFileSync(ENV_FILE, 'utf8');
+    if (envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m)) return 'solana';
+  }
+  return 'evm';
+}
+
+// ── Solana Wallet ─────────────────────────────────────────
+export type SolanaKeypair = {
+  secretKey: Uint8Array; // 64 bytes (private + public)
+  publicKey: Uint8Array; // 32 bytes
+  address: string; // Base58 public key
+};
+
+export function getOrCreateSolanaPrivateKey(): string {
+  if (existsSync(ENV_FILE)) {
+    const envContent = readFileSync(ENV_FILE, 'utf8');
+    const match = envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m);
+    if (match?.[1]) {
+      console.log('   Loaded existing Solana wallet from .env');
+      return match[1].trim();
+    }
+  }
+
+  const keypair = nacl.sign.keyPair();
+  const secretKeyBase58 = bs58.encode(Buffer.from(keypair.secretKey));
+  const existingContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
+  const separator = existingContent && !existingContent.endsWith('\n') ? '\n' : '';
+  writeFileSync(ENV_FILE, `${existingContent}${separator}SOLANA_PRIVATE_KEY=${secretKeyBase58}\n`);
+  console.log('   Generated new Solana wallet and saved to .env');
+  return secretKeyBase58;
+}
+
+export function createSolanaWallet(): SolanaKeypair {
+  const secretKeyBase58 = getOrCreateSolanaPrivateKey();
+  const secretKey = bs58.decode(secretKeyBase58);
+  const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
+  const address = bs58.encode(Buffer.from(keypair.publicKey));
+  return { secretKey: keypair.secretKey, publicKey: keypair.publicKey, address };
+}
+
+// ── SIWX/Solana Auth ──────────────────────────────────────
+function generateSiwxNonce(): string {
+  return randomBytes(16).toString('hex');
+}
+
+function formatSiwsMessage(params: {
+  domain: string;
+  address: string;
+  statement: string;
+  uri: string;
+  version: string;
+  chainRef: string;
+  nonce: string;
+  issuedAt: string;
+}): string {
+  return [
+    `${params.domain} wants you to sign in with your Solana account:`,
+    params.address,
+    '',
+    params.statement,
+    '',
+    `URI: ${params.uri}`,
+    `Version: ${params.version}`,
+    `Chain ID: ${params.chainRef}`,
+    `Nonce: ${params.nonce}`,
+    `Issued At: ${params.issuedAt}`,
+  ].join('\n');
+}
+
+export async function authenticateSolana(
+  keypair: SolanaKeypair,
+  tokenRef: TokenRef,
+): Promise<string> {
+  console.log('   Authenticating with SIWX/Solana...');
+
+  const message = formatSiwsMessage({
+    domain: new URL(X402_BASE_URL).host,
+    address: keypair.address,
+    statement: SIWX_STATEMENT,
+    uri: X402_BASE_URL,
+    version: '1',
+    chainRef: SOLANA_DEVNET_CHAIN_REF,
+    nonce: generateSiwxNonce(),
+    issuedAt: new Date().toISOString(),
+  });
+
+  const messageBytes = new TextEncoder().encode(message);
+  const signatureBytes = nacl.sign.detached(messageBytes, keypair.secretKey);
+  const signature = bs58.encode(Buffer.from(signatureBytes));
+
+  const response = await fetch(X402_AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, signature, type: 'siwx' }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Authentication failed: ${JSON.stringify(error)}`);
+  }
+
+  const { token, accountId, expiresAt } = (await response.json()) as {
+    token: string;
+    accountId: string;
+    expiresAt: string;
+  };
+
+  tokenRef.value = token;
+  console.log(`   Authenticated as ${accountId}`);
+  console.log(`   Token expires: ${expiresAt}`);
+
+  return token;
+}
+
+// ── Solana x402 Fetch ────────────────────────────────────
+export async function createSolanaX402Fetch(
+  keypair: SolanaKeypair,
+  tokenRef: TokenRef,
+  tracker: PaymentTracker,
+): Promise<typeof globalThis.fetch> {
+  // Base fetch that injects JWT
+  const authedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    if (input instanceof Request) {
+      const request = input.clone();
+      if (tokenRef.value) request.headers.set('Authorization', `Bearer ${tokenRef.value}`);
+      return fetch(request);
+    }
+    const headers = new Headers(init?.headers);
+    if (tokenRef.value) headers.set('Authorization', `Bearer ${tokenRef.value}`);
+    return fetch(input, { ...init, headers });
+  };
+
+  // x402 v2 SVM payment handling
+  const signer = await createKeyPairSignerFromBytes(keypair.secretKey);
+  const svmScheme = new ExactSvmScheme(signer);
+  const client = new x402Client().register(SOLANA_DEVNET_CAIP2, svmScheme);
+  const x402Fetch = wrapFetchWithPayment(authedFetch, client);
+
+  // Tracking wrapper — same pattern as EVM
+  const trackingFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const fetchFn =
+      tracker.maxPayments !== undefined && tracker.successfulPaymentCount >= tracker.maxPayments
+        ? authedFetch
+        : x402Fetch;
+    const response = await fetchFn(input, init);
+    tracker.totalFetchCount++;
+
+    const paymentHeader = response.headers.get('PAYMENT-RESPONSE');
+    if (paymentHeader) {
+      tracker.paymentResponseCount++;
+      try {
+        const decoded = decodePaymentResponseHeader(paymentHeader);
+        if (decoded.success) {
+          tracker.successfulPaymentCount++;
+          console.log(
+            `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - SUCCESS tx: ${decoded.transaction?.slice(0, 20)}...`,
+          );
+        } else {
+          console.log(
+            `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - FAILED: ${decoded.errorReason || 'unknown'}`,
+          );
+        }
+      } catch (_e) {
+        console.log(
+          `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - raw: ${paymentHeader.slice(0, 50)}...`,
+        );
+      }
+    }
+
+    return response;
+  };
+
+  return trackingFetch as typeof globalThis.fetch;
+}
+
+// ── Authed Fetch (JWT only, no x402 payment) ──────────────
+// Used in bootstrapped mode where credits are pre-purchased.
+export function createAuthedFetch(
+  tokenRef: TokenRef,
+  tracker: PaymentTracker,
+): typeof globalThis.fetch {
+  const authedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    if (input instanceof Request) {
+      const request = input.clone();
+      if (tokenRef.value) request.headers.set('Authorization', `Bearer ${tokenRef.value}`);
+      const response = await fetch(request);
+      tracker.totalFetchCount++;
+      return response;
+    }
+    const headers = new Headers(init?.headers);
+    if (tokenRef.value) headers.set('Authorization', `Bearer ${tokenRef.value}`);
+    const response = await fetch(input, { ...init, headers });
+    tracker.totalFetchCount++;
+    return response;
+  };
+  return authedFetch as typeof globalThis.fetch;
+}
+
+// ── x402 Fetch (EVM) ──────────────────────────────────────
 export function createX402Fetch(
   walletClient: WalletClient,
   tokenRef: TokenRef,
@@ -386,4 +598,74 @@ export function createX402Fetch(
   };
 
   return trackingFetch as typeof globalThis.fetch;
+}
+
+// ── Example Setup (shared across all example scripts) ─────
+// Handles wallet creation, auth, faucet, and x402 fetch for both EVM and Solana.
+export type ExampleSetup = {
+  chainType: ChainType;
+  walletAddress: string;
+  /** EVM USDC balance (0n for Solana — no EVM balance to track). */
+  startBalance: bigint;
+  x402Fetch: typeof globalThis.fetch;
+  /** Re-authenticate on 401. Chain-aware. */
+  reAuth: () => Promise<void>;
+};
+
+export async function setupExample(
+  tokenRef: TokenRef,
+  tracker: PaymentTracker,
+): Promise<ExampleSetup> {
+  const chainType = detectChainType();
+  const bootstrapped = process.env.X402_BOOTSTRAPPED === '1';
+
+  if (chainType === 'solana') {
+    const keypair = createSolanaWallet();
+    console.log(`   Wallet: ${keypair.address} (Solana)\n`);
+
+    if (bootstrapped && process.env.X402_JWT) {
+      tokenRef.value = process.env.X402_JWT;
+      console.log('   Using JWT from bootstrap.\n');
+    } else {
+      await authenticateSolana(keypair, tokenRef);
+    }
+
+    const x402Fetch = bootstrapped
+      ? createAuthedFetch(tokenRef, tracker)
+      : await createSolanaX402Fetch(keypair, tokenRef, tracker);
+
+    return {
+      chainType,
+      walletAddress: keypair.address,
+      startBalance: 0n,
+      x402Fetch,
+      reAuth: async () => {
+        await authenticateSolana(keypair, tokenRef);
+      },
+    };
+  }
+
+  // EVM path
+  const { account, walletClient } = createWallet();
+  console.log(`   Wallet: ${account.address}\n`);
+
+  if (bootstrapped && process.env.X402_JWT) {
+    tokenRef.value = process.env.X402_JWT;
+    console.log('   Using JWT from bootstrap.\n');
+  } else {
+    await authenticate(walletClient, tokenRef);
+  }
+
+  const startBalance = await ensureFunded(account.address, tokenRef);
+  const x402Fetch = createX402Fetch(walletClient, tokenRef, tracker);
+
+  return {
+    chainType,
+    walletAddress: account.address,
+    startBalance,
+    x402Fetch,
+    reAuth: async () => {
+      await authenticate(walletClient, tokenRef);
+    },
+  };
 }

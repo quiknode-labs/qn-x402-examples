@@ -4,14 +4,11 @@ import { formatUnits } from 'viem';
 import { bytesToHex } from 'viem/utils';
 import { AccessAPI, BlockStatus } from './gen/flow/access/access_pb.js';
 import {
-  authenticate,
   createPaymentTracker,
   createTokenRef,
-  createWallet,
-  createX402Fetch,
-  ensureFunded,
   getCredits,
   getUsdcBalanceRaw,
+  setupExample,
   USDC_DECIMALS,
   X402_BASE_URL,
 } from './lib/x402-helpers.js';
@@ -53,27 +50,16 @@ const debugInterceptor: Interceptor = (next) => async (req) => {
 async function main() {
   const startTime = Date.now();
 
-  console.log('\n  x402 Example - gRPC-Web on Flow Mainnet (SIWE + JWT Auth)\n');
+  console.log('\n  x402 Example - gRPC-Web on Flow Mainnet\n');
   console.log('='.repeat(60));
 
-  // ── Step 1: Wallet ─────────────────────────────────────
-  const { account, walletClient } = createWallet();
-  console.log(`   Wallet: ${account.address}\n`);
+  // ── Setup (chain-aware: EVM or Solana) ───────────────────
+  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
+    tokenRef,
+    tracker,
+  );
 
-  // ── Step 2: Authenticate ───────────────────────────────
-  if (process.env.X402_JWT) {
-    tokenRef.value = process.env.X402_JWT;
-    console.log('   Using JWT from bootstrap.\n');
-  } else {
-    await authenticate(walletClient, tokenRef);
-  }
-
-  // ── Step 3: USDC balance & faucet ──────────────────────
-  const startBalance = await ensureFunded(account.address, tokenRef);
-
-  // ── Step 4: Create connect-web gRPC client ─────────────
-  const x402Fetch = createX402Fetch(walletClient, tokenRef, tracker);
-
+  // ── Create connect-web gRPC client ───────────────────────
   // Debug wrapper: log error response bodies (worker returns JSON on 502)
   const debugFetch: typeof globalThis.fetch = async (input, init) => {
     const response = await x402Fetch(input, init);
@@ -94,7 +80,7 @@ async function main() {
 
   const flowClient = createClient(AccessAPI, transport);
 
-  // ── Step 5: Check initial credits ──────────────────────
+  // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
   let creditsInfo = await getCredits(tokenRef);
@@ -262,7 +248,7 @@ async function main() {
         streamAttempts < MAX_STREAM_ATTEMPTS
       ) {
         console.log('   Token expired mid-stream, re-authenticating...');
-        await authenticate(walletClient, tokenRef);
+        await reAuth();
         continue; // retry stream
       }
 
@@ -290,10 +276,12 @@ async function main() {
 
   // ── Summary ────────────────────────────────────────────
   let currentBalance = startBalance;
-  try {
-    currentBalance = await getUsdcBalanceRaw(account.address);
-  } catch (_error) {
-    console.log('   (Could not fetch final balance)');
+  if (chainType === 'evm') {
+    try {
+      currentBalance = await getUsdcBalanceRaw(walletAddress);
+    } catch (_error) {
+      console.log('   (Could not fetch final balance)');
+    }
   }
 
   let finalCredits = { credits: 0 };
@@ -311,6 +299,7 @@ async function main() {
   console.log('='.repeat(60));
   console.log(`   Network:                   flow-mainnet`);
   console.log(`   Protocol:                  gRPC-Web`);
+  console.log(`   Auth chain:                ${chainType}`);
   console.log(`   Total gRPC calls:          ${totalGrpcCalls}`);
   console.log(`     Unary calls:             ${unaryCalls}`);
   console.log(`     Stream blocks received:  ${blocksReceived}`);
@@ -318,9 +307,11 @@ async function main() {
   console.log(`   x402 payments:             ${tracker.successfulPaymentCount}`);
   console.log(`   Initial credits:           ${initialCredits}`);
   console.log(`   Final credits:             ${finalCredits.credits}`);
-  console.log(`   Starting USDC:             $${formatUnits(startBalance, USDC_DECIMALS)}`);
-  console.log(`   Final USDC:                $${formatUnits(currentBalance, USDC_DECIMALS)}`);
-  console.log(`   USDC spent:                $${formatUnits(totalSpent, USDC_DECIMALS)}`);
+  if (chainType === 'evm') {
+    console.log(`   Starting USDC:             $${formatUnits(startBalance, USDC_DECIMALS)}`);
+    console.log(`   Final USDC:                $${formatUnits(currentBalance, USDC_DECIMALS)}`);
+    console.log(`   USDC spent:                $${formatUnits(totalSpent, USDC_DECIMALS)}`);
+  }
   if (streamError) {
     console.log(`   Stream termination:        ${streamError}`);
   }

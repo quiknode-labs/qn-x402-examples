@@ -17,14 +17,11 @@
  */
 import { formatUnits } from 'viem';
 import {
-  authenticate,
   createPaymentTracker,
   createTokenRef,
-  createWallet,
-  createX402Fetch,
-  ensureFunded,
   getCredits,
   getUsdcBalanceRaw,
+  setupExample,
   USDC_DECIMALS,
   X402_BASE_URL,
 } from './lib/x402-helpers.js';
@@ -73,28 +70,16 @@ async function restGet(
 async function main() {
   const startTime = Date.now();
 
-  console.log('\n  x402 Example - Aptos REST API via x402 (SIWE + JWT Auth)\n');
+  console.log('\n  x402 Example - Aptos REST API via x402\n');
   console.log('='.repeat(60));
 
-  // ── Step 1: Wallet ─────────────────────────────────────
-  const { account, walletClient } = createWallet();
-  console.log(`   Wallet: ${account.address}\n`);
+  // ── Setup (chain-aware: EVM or Solana) ───────────────────
+  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
+    tokenRef,
+    tracker,
+  );
 
-  // ── Step 2: Authenticate ───────────────────────────────
-  if (process.env.X402_JWT) {
-    tokenRef.value = process.env.X402_JWT;
-    console.log('   Using JWT from bootstrap.\n');
-  } else {
-    await authenticate(walletClient, tokenRef);
-  }
-
-  // ── Step 3: USDC balance & faucet ──────────────────────
-  const startBalance = await ensureFunded(account.address, tokenRef);
-
-  // ── Step 4: Create x402 fetch ──────────────────────────
-  const x402Fetch = createX402Fetch(walletClient, tokenRef, tracker);
-
-  // ── Step 5: Check initial credits ──────────────────────
+  // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
   let creditsInfo = await getCredits(tokenRef);
@@ -289,7 +274,7 @@ async function main() {
       // Handle 401 by re-authenticating
       if (error.message?.includes('401') || error.message?.includes('Token expired')) {
         console.log('   Token expired, re-authenticating...');
-        await authenticate(walletClient, tokenRef);
+        await reAuth();
         continue;
       }
       console.error(`   Request #${loopRequests + 1} failed:`, error.message);
@@ -299,10 +284,12 @@ async function main() {
 
   // ── Summary ────────────────────────────────────────────
   let currentBalance = startBalance;
-  try {
-    currentBalance = await getUsdcBalanceRaw(account.address);
-  } catch {
-    console.log('   (Could not fetch final balance)');
+  if (chainType === 'evm') {
+    try {
+      currentBalance = await getUsdcBalanceRaw(walletAddress);
+    } catch {
+      console.log('   (Could not fetch final balance)');
+    }
   }
 
   let finalCredits = { credits: 0 };
@@ -320,6 +307,7 @@ async function main() {
   console.log('='.repeat(60));
   console.log(`   Network:                   ${REST_NETWORK}`);
   console.log(`   Protocol:                  REST (HTTP GET)`);
+  console.log(`   Auth chain:                ${chainType}`);
   console.log(`   Total REST calls:          ${totalRequests}`);
   console.log(`     Phase 1 (endpoints):     ${callsMade}`);
   console.log(`     Phase 2 (loop):          ${loopRequests}`);
@@ -327,9 +315,11 @@ async function main() {
   console.log(`   x402 payments:             ${tracker.successfulPaymentCount}`);
   console.log(`   Initial credits:           ${initialCredits}`);
   console.log(`   Final credits:             ${finalCredits.credits}`);
-  console.log(`   Starting USDC:             $${formatUnits(startBalance, USDC_DECIMALS)}`);
-  console.log(`   Final USDC:                $${formatUnits(currentBalance, USDC_DECIMALS)}`);
-  console.log(`   USDC spent:                $${formatUnits(totalSpent, USDC_DECIMALS)}`);
+  if (chainType === 'evm') {
+    console.log(`   Starting USDC:             $${formatUnits(startBalance, USDC_DECIMALS)}`);
+    console.log(`   Final USDC:                $${formatUnits(currentBalance, USDC_DECIMALS)}`);
+    console.log(`   USDC spent:                $${formatUnits(totalSpent, USDC_DECIMALS)}`);
+  }
   console.log(`   Duration:                  ${(durationMs / 1000).toFixed(2)}s`);
   if (totalRequests > 0) {
     console.log(`   Avg time per request:      ${(durationMs / totalRequests).toFixed(0)}ms`);

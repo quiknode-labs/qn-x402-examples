@@ -17,15 +17,20 @@
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-node": "^2.1.1",
     "@connectrpc/connect-web": "^2.1.1",
+    "@solana/signers": "^5.4.0",
     "@x402/evm": "^2.0.0",
     "@x402/fetch": "^2.0.0",
+    "@x402/svm": "^2.3.0",
+    "bs58": "^4.0.1",
     "dotenv": "^16.6.1",
     "siwe": "^2.3.2",
+    "tweetnacl": "^1.0.3",
     "viem": "^2.44.0"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.65.0",
     "@bufbuild/protoc-gen-es": "^2.11.0",
+    "@types/bs58": "^4.0.4",
     "@types/node": "^22.19.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
