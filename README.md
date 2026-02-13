@@ -81,7 +81,9 @@ flowchart TB
 
 The Solana flow requires manual keypair and USDC setup because `detectChainType()` only activates the Solana path when `.env` contains a non-empty `SOLANA_PRIVATE_KEY`, and the `/drip` faucet is EVM-only:
 
-1. **Generate a keypair** -- Use the one-liner below (or any Solana keygen tool). This creates a `.env` with a new keypair and prints your wallet address:
+1. **Set up a Solana wallet** -- Either generate a new keypair using the command below, or import an existing one by setting your private key (Base58-encoded) as `SOLANA_PRIVATE_KEY` in your `.env` file.
+
+   **To generate a new Solana keypair:**
    ```bash
    npx tsx -e "
    import nacl from 'tweetnacl'; import bs58 from 'bs58'; import { writeFileSync } from 'fs';
@@ -91,7 +93,13 @@ The Solana flow requires manual keypair and USDC setup because `detectChainType(
    "
    ```
 
-2. **Fund with Solana Devnet USDC** -- Send Devnet USDC to the wallet address printed above. The USDC mint on Solana Devnet is `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`. You do **not** need SOL -- the x402 facilitator pays transaction fees.
+   **To import an existing wallet:**  
+   Edit your `.env` file and set:
+   ```
+   SOLANA_PRIVATE_KEY=<YOUR_BASE58_SECRET_KEY>
+   ```
+
+2. **Fund with Solana Devnet USDC** -- Get Solana Devnet USDC for your wallet address by visiting [faucet.circle.com](https://faucet.circle.com/). Enter your Solana wallet address and request Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). You do **not** need SOL -- the x402 facilitator pays transaction fees.
 
 3. **Run** -- With USDC in the wallet, `npm start` bootstraps auth and launches all examples.
 
@@ -129,11 +137,17 @@ npm run start:ws        # WebSocket demo (Ethereum)
 # Install dependencies
 npm install
 
-# Generate a Solana keypair (see Solana Prerequisites above for the one-liner)
-# Then fund the printed wallet address with Devnet USDC
+# Generate a Solana keypair or import an existing wallet (see Solana Prerequisites above)
+# Then fund your wallet address with Devnet USDC via faucet.circle.com
 
-# Run all 4 examples
+# Run all 4 examples in parallel (via stmux)
 npm start
+
+# Or run individual examples
+npm run start:jsonrpc   # JSON-RPC demo
+npm run start:rest      # REST demo (Aptos)
+npm run start:grpc      # gRPC-Web demo (Flow)
+npm run start:ws        # WebSocket demo (Ethereum)
 ```
 
 ## Configuration
@@ -176,7 +190,7 @@ Defined in `lib/x402-helpers.ts`:
 | `BASE_SEPOLIA_CHAIN_ID` | `84532` | Chain ID for SIWE |
 | `BASE_SEPOLIA_CAIP2` | `eip155:84532` | CAIP-2 identifier for Base Sepolia |
 | `SOLANA_DEVNET_CAIP2` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 identifier for Solana Devnet |
-| `SIWX_STATEMENT` | QuickNode ToS | Required SIWX statement |
+| `SIWX_STATEMENT` | Quicknode ToS | Required SIWX statement |
 
 ## Project Structure
 
@@ -373,8 +387,8 @@ JWT tokens expire after 1 hour. The examples automatically re-authenticate when 
 ### "Solana: no faucet available"
 
 The `/drip` endpoint only supports EVM wallets. To fund a Solana wallet with Devnet USDC:
-1. Acquire Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`)
-2. Send USDC to your wallet address
+1. Visit [faucet.circle.com](https://faucet.circle.com/) to acquire Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`)
+2. Enter your Solana wallet address to receive USDC
 3. You do **not** need SOL -- the x402 facilitator pays transaction fees
 
 ### "Drip request failed" (EVM)
