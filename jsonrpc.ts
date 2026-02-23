@@ -11,7 +11,6 @@
 import { formatUnits } from 'viem';
 import {
   createPaymentTracker,
-  createTokenRef,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -25,7 +24,6 @@ const JSONRPC_URL = `${X402_BASE_URL}/${JSONRPC_NETWORK}`;
 const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean ────────────────────────────────────
@@ -71,15 +69,13 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
@@ -117,7 +113,7 @@ async function main() {
       const blockNumber = BigInt(result as string);
 
       // Check credits
-      creditsInfo = await getCredits(tokenRef);
+      creditsInfo = await getCredits(getToken);
 
       // Detect credit changes
       const creditDelta = lastCredits - creditsInfo.credits;
@@ -153,7 +149,7 @@ async function main() {
       // Handle 401 by re-authenticating
       if (error.message?.includes('401') || error.message?.includes('Token expired')) {
         console.log('   Token expired, re-authenticating...');
-        await reAuth();
+        await client.authenticate();
         continue;
       }
       console.error(`   Request #${requestCount + 1} failed:`, error.message);
@@ -173,7 +169,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     console.log('   (Could not fetch final credits)');
   }

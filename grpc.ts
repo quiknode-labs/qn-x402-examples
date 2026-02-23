@@ -5,7 +5,6 @@ import { bytesToHex } from 'viem/utils';
 import { AccessAPI, BlockStatus } from './gen/flow/access/access_pb.js';
 import {
   createPaymentTracker,
-  createTokenRef,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -18,7 +17,6 @@ const X402_GRPC_BASE_URL = `${process.env.X402_GRPC_BASE_URL || `${X402_BASE_URL
 const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean — suppress stray gRPC/Node errors ──
@@ -54,10 +52,8 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Create connect-web gRPC client ───────────────────────
   // Debug wrapper: log error response bodies (worker returns JSON on 502)
@@ -83,7 +79,7 @@ async function main() {
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
@@ -115,7 +111,7 @@ async function main() {
   try {
     await flowClient.ping({});
     unaryCalls++;
-    creditsInfo = await getCredits(tokenRef);
+    creditsInfo = await getCredits(getToken);
     const creditDelta1 = lastCredits - creditsInfo.credits;
     const creditInfo1 =
       creditDelta1 !== 0 ? ` (${creditDelta1 > 0 ? '-' : '+'}${Math.abs(creditDelta1)})` : '';
@@ -129,7 +125,7 @@ async function main() {
   try {
     const blockRes = await flowClient.getLatestBlock({ isSealed: true });
     unaryCalls++;
-    creditsInfo = await getCredits(tokenRef);
+    creditsInfo = await getCredits(getToken);
     const creditDelta2 = lastCredits - creditsInfo.credits;
     const creditInfo2 =
       creditDelta2 !== 0 ? ` (${creditDelta2 > 0 ? '-' : '+'}${Math.abs(creditDelta2)})` : '';
@@ -153,7 +149,7 @@ async function main() {
   console.log(`\n${'='.repeat(60)}`);
   console.log('-- Phase 2: Streaming gRPC-Web (SubscribeBlocksFromLatest) --');
 
-  creditsInfo = await getCredits(tokenRef);
+  creditsInfo = await getCredits(getToken);
   const creditsBeforeStream = creditsInfo.credits;
   console.log(`   Credits before stream: ${creditsBeforeStream}`);
 
@@ -192,7 +188,7 @@ async function main() {
           // ~100-300ms HTTP call adds negligible delay.
           let creditDisplay = `${lastCredits}`;
           try {
-            creditsInfo = await getCredits(tokenRef);
+            creditsInfo = await getCredits(getToken);
             const creditDelta = lastCredits - creditsInfo.credits;
             const creditInfo =
               creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
@@ -248,7 +244,7 @@ async function main() {
         streamAttempts < MAX_STREAM_ATTEMPTS
       ) {
         console.log('   Token expired mid-stream, re-authenticating...');
-        await reAuth();
+        await client.authenticate();
         continue; // retry stream
       }
 
@@ -286,7 +282,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     console.log('   (Could not fetch final credits)');
   }
