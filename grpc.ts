@@ -83,6 +83,7 @@ async function main() {
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
   console.log('='.repeat(60));
 
   // Reset counters for the test run
@@ -102,7 +103,6 @@ async function main() {
   }
 
   let unaryCalls = 0;
-  let lastCredits = initialCredits;
 
   // ── Phase 1: Unary gRPC calls ─────────────────────────
   console.log('\n-- Phase 1: Unary gRPC-Web Calls --\n');
@@ -111,12 +111,7 @@ async function main() {
   try {
     await flowClient.ping({});
     unaryCalls++;
-    creditsInfo = await getCredits(getToken);
-    const creditDelta1 = lastCredits - creditsInfo.credits;
-    const creditInfo1 =
-      creditDelta1 !== 0 ? ` (${creditDelta1 > 0 ? '-' : '+'}${Math.abs(creditDelta1)})` : '';
-    lastCredits = creditsInfo.credits;
-    console.log(`   [1] Ping                  OK  | Credits: ${creditsInfo.credits}${creditInfo1}`);
+    console.log(`   [1] Ping                  OK`);
   } catch (err: any) {
     console.error(`   [1] Ping                  FAILED: ${err.message}`);
   }
@@ -125,11 +120,6 @@ async function main() {
   try {
     const blockRes = await flowClient.getLatestBlock({ isSealed: true });
     unaryCalls++;
-    creditsInfo = await getCredits(getToken);
-    const creditDelta2 = lastCredits - creditsInfo.credits;
-    const creditInfo2 =
-      creditDelta2 !== 0 ? ` (${creditDelta2 > 0 ? '-' : '+'}${Math.abs(creditDelta2)})` : '';
-    lastCredits = creditsInfo.credits;
     const block = blockRes.block;
     if (block) {
       const ts = block.timestamp
@@ -137,7 +127,6 @@ async function main() {
         : 'n/a';
       console.log(`   [2] GetLatestBlock        OK  | Height: ${block.height} | Time: ${ts}`);
       console.log(`       Block ID: ${bytesToHex(block.id).slice(0, 34)}...`);
-      console.log(`       Credits: ${creditsInfo.credits}${creditInfo2}`);
     } else {
       console.log(`   [2] GetLatestBlock        OK  | (no block in response)`);
     }
@@ -158,12 +147,12 @@ async function main() {
   } else if (creditsBeforeStream <= 0 && tracker.successfulPaymentCount === 0) {
     console.log('   No credits — stream request will trigger x402 payment\n');
   } else {
-    console.log(`   Streaming blocks until credits exhausted...\n`);
+    console.log(`   Streaming blocks until credits exhausted or 500 blocks...\n`);
   }
 
   let blocksReceived = 0;
   let streamError: string | null = null;
-  const streamAbort = new AbortController(); // F1: graceful stream cancellation
+  const streamAbort = new AbortController();
 
   // Retry wrapper — handles re-auth, transient failures, and 402 on stream open
   let streamAttempts = 0;
@@ -184,31 +173,10 @@ async function main() {
           : '';
 
         if (block) {
-          // Synchronous credit check — blocks arrive every 6-11s so the
-          // ~100-300ms HTTP call adds negligible delay.
-          let creditDisplay = `${lastCredits}`;
-          try {
-            creditsInfo = await getCredits(getToken);
-            const creditDelta = lastCredits - creditsInfo.credits;
-            const creditInfo =
-              creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
-            lastCredits = creditsInfo.credits;
-            creditDisplay = `${creditsInfo.credits}${creditInfo}`;
-          } catch {
-            // Credit check failed — display last known value
-          }
-
           const local = new Date().toISOString().slice(11, 23);
           console.log(
-            `   ${local} Block #${blocksReceived}: height=${block.height} time=${ts} | Credits: ${creditDisplay}`,
+            `   ${local} Block #${blocksReceived}: height=${block.height} time=${ts}`,
           );
-        }
-
-        // Exit when credits exhausted
-        if (lastCredits <= 0) {
-          console.log('\n   All credits consumed. Demo complete!');
-          streamAbort.abort();
-          break;
         }
 
         // Safety limit

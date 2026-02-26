@@ -11,7 +11,6 @@
  */
 import { formatUnits } from 'viem';
 import {
-  createCreditPoller,
   createPaymentTracker,
   getCredits,
   getUsdcBalanceRaw,
@@ -54,6 +53,7 @@ async function main() {
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
 
   console.log(
     `   Mode: ${BOOTSTRAPPED ? 'bootstrapped (no payments)' : 'standalone (1 payment max)'}`,
@@ -95,11 +95,6 @@ async function main() {
   let subscriptionId: string | null = null;
   let closeCode = 0;
   let closeReason = '';
-
-  // Non-blocking credit poller — fires-and-forgets HTTP requests so the
-  // message handler never blocks waiting for a credit check response.
-  const poller = createCreditPoller(getToken);
-  poller.credits = creditsBeforeWs;
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -166,10 +161,9 @@ async function main() {
           const blockNumber = parseInt(block.number, 16);
           const timestamp = new Date().toISOString().slice(11, 23);
 
-          poller.poll(); // fire-and-forget
           console.log(
             `   ${timestamp} Block #${eventsReceived}: height=${blockNumber} ` +
-              `hash=${block.hash?.slice(0, 18)}... | Credits: ${poller.credits}${poller.delta}`,
+              `hash=${block.hash?.slice(0, 18)}...`,
           );
 
           if (eventsReceived >= MAX_EVENTS) {

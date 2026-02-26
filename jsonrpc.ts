@@ -75,10 +75,11 @@ async function main() {
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(getToken);
+  const creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
   console.log('='.repeat(60));
 
   // Reset counters for the test run
@@ -104,7 +105,6 @@ async function main() {
   }
 
   let requestCount = 0;
-  let lastCredits = initialCredits;
 
   while (true) {
     try {
@@ -112,25 +112,8 @@ async function main() {
       requestCount++;
       const blockNumber = BigInt(result as string);
 
-      // Check credits
-      creditsInfo = await getCredits(getToken);
-
-      // Detect credit changes
-      const creditDelta = lastCredits - creditsInfo.credits;
-      const creditInfo =
-        creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
-      lastCredits = creditsInfo.credits;
-
       const timestamp = new Date().toISOString().slice(11, 23);
-      console.log(
-        `   ${timestamp} Request #${requestCount}: Block ${blockNumber} | Credits: ${creditsInfo.credits}${creditInfo}`,
-      );
-
-      // Stop when credits exhausted
-      if (creditsInfo.credits <= 0 && (BOOTSTRAPPED || tracker.successfulPaymentCount >= 1)) {
-        console.log('\n   All credits consumed. Demo complete!');
-        break;
-      }
+      console.log(`   ${timestamp} Request #${requestCount}: Block ${blockNumber}`);
 
       // Safety limit
       if (requestCount >= 500) {

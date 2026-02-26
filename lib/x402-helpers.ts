@@ -188,12 +188,12 @@ export function detectChainType(): ChainType {
 
 // ── Credits ──────────────────────────────────────────────
 
-// Module-level cache shared across all callers in this process
+// The /credits endpoint is rate-limited in production, so the example scripts
+// only call it at startup and in the final summary — never inside tight loops.
+// A 429 backoff guard still protects against accidental bursts.
 let _creditsCache: { accountId: string; credits: number } | null = null;
-let _creditsNextAllowedMs = 0;
+let _credits429BackoffUntilMs = 0;
 let _creditsInflight: Promise<{ accountId: string; credits: number }> | null = null;
-const CREDITS_BASE_TTL_MS = 2000;
-const CREDITS_JITTER_MS = 1000;
 const CREDITS_429_BACKOFF_MS = 10_000;
 
 async function _fetchCreditsRaw(
@@ -205,8 +205,7 @@ async function _fetchCreditsRaw(
   });
 
   if (response.status === 429) {
-    // Extend backoff on rate-limit
-    _creditsNextAllowedMs = Date.now() + CREDITS_429_BACKOFF_MS;
+    _credits429BackoffUntilMs = Date.now() + CREDITS_429_BACKOFF_MS;
     if (_creditsCache) return _creditsCache;
     throw new Error('Rate limited (429) and no cached credits available');
   }
@@ -218,7 +217,6 @@ async function _fetchCreditsRaw(
 
   const data: { accountId: string; credits: number } = await response.json();
   _creditsCache = data;
-  _creditsNextAllowedMs = Date.now() + CREDITS_BASE_TTL_MS + Math.random() * CREDITS_JITTER_MS;
   return data;
 }
 
@@ -229,73 +227,20 @@ export async function getCredits(
   const token = getToken();
   if (!token) throw new Error('Not authenticated - call authenticate() first');
 
-  // Return cached value if within TTL (unless forceRefresh)
-  if (!opts?.forceRefresh && _creditsCache && Date.now() < _creditsNextAllowedMs) {
+  // During 429 backoff, return last-known value (unless forceRefresh)
+  if (!opts?.forceRefresh && _creditsCache && Date.now() < _credits429BackoffUntilMs) {
     return _creditsCache;
   }
 
   // Dedup in-flight requests (skip dedup when forceRefresh so we always get fresh data)
   if (!opts?.forceRefresh && _creditsInflight) return _creditsInflight;
 
-  _creditsInflight = _fetchCreditsRaw(token).finally(() => {
-    _creditsInflight = null;
+  const promise = _fetchCreditsRaw(token).finally(() => {
+    if (_creditsInflight === promise) _creditsInflight = null;
   });
+  _creditsInflight = promise;
 
   return _creditsInflight;
-}
-
-// ── Credit Poller ────────────────────────────────────────
-// Non-blocking credit tracker. Call poll() without await — it fires a
-// background HTTP request that updates .credits and .delta when it resolves.
-// Used by WebSocket where awaiting getCredits() on every event blocks the
-// message handler and causes burst-pause-burst output.
-export type CreditPoller = {
-  /** Most recently observed credit count. */
-  credits: number;
-  /** Delta string for display, e.g. " (-1)" or " (+95)". Empty when unchanged. */
-  delta: string;
-  /** Fire-and-forget: starts a background credit fetch. */
-  poll(): void;
-};
-
-export function createCreditPoller(getToken: () => string | null): CreditPoller {
-  let latest = 0;
-  let deltaStr = '';
-  let inflight = false;
-
-  return {
-    get credits() {
-      return latest;
-    },
-    set credits(v: number) {
-      latest = v;
-    },
-    get delta() {
-      const d = deltaStr;
-      // Clear after reading so the delta only shows once per update
-      deltaStr = '';
-      return d;
-    },
-    poll() {
-      // Skip if a request is already in flight — avoids piling up HTTP calls
-      if (inflight) return;
-      inflight = true;
-      getCredits(getToken)
-        .then((info) => {
-          const diff = latest - info.credits;
-          if (diff !== 0) {
-            deltaStr = ` (${diff > 0 ? '-' : '+'}${Math.abs(diff)})`;
-          }
-          latest = info.credits;
-        })
-        .catch(() => {
-          // Silently ignore — display stale value
-        })
-        .finally(() => {
-          inflight = false;
-        });
-    },
-  };
 }
 
 // ── USDC Balance ─────────────────────────────────────────

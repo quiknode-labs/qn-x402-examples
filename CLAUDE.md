@@ -33,7 +33,7 @@ npm run typecheck      # tsc --noEmit
 
 - **Public repo** — no staging URLs, no internal references
 - **Naming:** "Quicknode" (not "QuickNode")
-- **URLs:** Always `x402.quicknode.com` (never `x402.quiknode-cf.pro`)
+- **URLs:** Always `x402.quicknode.com`
 - All auth/payment handled by `@quicknode/x402` — no manual SIWE message construction
 
 ## Key Files
