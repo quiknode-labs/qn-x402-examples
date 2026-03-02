@@ -1,43 +1,126 @@
-import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { createKeyPairSignerFromBytes } from '@solana/signers';
-import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
-import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from '@x402/fetch';
-import { ExactSvmScheme } from '@x402/svm';
+import { createQuicknodeX402Client, type QuicknodeX402Client } from '@quicknode/x402';
 import bs58 from 'bs58';
 import { config } from 'dotenv';
-import { generateNonce, SiweMessage } from 'siwe';
 import nacl from 'tweetnacl';
-import { createWalletClient, formatUnits, type Hex, http, type WalletClient } from 'viem';
+import { formatUnits, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia } from 'viem/chains';
+import { base, baseSepolia, polygon, polygonAmoy } from 'viem/chains';
 
 // Load environment variables
 config();
 
-// ── Constants ────────────────────────────────────────────
+// ── EVM Chain Config Registry ────────────────────────────
+
+/** EVM chain configurations keyed by human-readable slug */
+export const EVM_CHAINS = {
+  'base-sepolia': {
+    caip2: 'eip155:84532',
+    numericId: 84532,
+    viemChain: baseSepolia,
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    rpcSlug: 'base-sepolia',
+    docsDemo: 'https://docs-demo.base-sepolia.quiknode.pro/',
+    hasFaucet: true,
+  },
+  'base-mainnet': {
+    caip2: 'eip155:8453',
+    numericId: 8453,
+    viemChain: base,
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    rpcSlug: 'base-mainnet',
+    docsDemo: 'https://docs-demo.base-mainnet.quiknode.pro/',
+    hasFaucet: false,
+  },
+  'polygon-amoy': {
+    caip2: 'eip155:80002',
+    numericId: 80002,
+    viemChain: polygonAmoy,
+    usdc: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+    rpcSlug: 'matic-amoy',
+    docsDemo: 'https://docs-demo.matic-amoy.quiknode.pro/',
+    hasFaucet: false,
+  },
+  'polygon-mainnet': {
+    caip2: 'eip155:137',
+    numericId: 137,
+    viemChain: polygon,
+    usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    rpcSlug: 'matic-mainnet',
+    docsDemo: 'https://docs-demo.matic.quiknode.pro/',
+    hasFaucet: false,
+  },
+} as const;
+
+export type EvmChainSlug = keyof typeof EVM_CHAINS;
+
+export function getEvmChain(): (typeof EVM_CHAINS)[EvmChainSlug] {
+  const slug = (process.env.X402_EVM_CHAIN ?? 'base-sepolia') as EvmChainSlug;
+  const chain = EVM_CHAINS[slug];
+  if (!chain) {
+    throw new Error(
+      `Unknown X402_EVM_CHAIN="${slug}". Valid: ${Object.keys(EVM_CHAINS).join(', ')}`,
+    );
+  }
+  return chain;
+}
+
+// ── Solana Chain Config Registry ─────────────────────────
+
+/** Solana chain configurations keyed by human-readable slug */
+export const SOLANA_CHAINS = {
+  'solana-devnet': {
+    caip2: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+    chainRef: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+    usdc: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    rpcSlug: 'solana-devnet',
+  },
+  'solana-mainnet': {
+    caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    chainRef: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    rpcSlug: 'solana-mainnet',
+  },
+} as const;
+
+export type SolanaChainSlug = keyof typeof SOLANA_CHAINS;
+
+export function getSolanaChain(): (typeof SOLANA_CHAINS)[SolanaChainSlug] {
+  const slug = (process.env.X402_SOLANA_CHAIN ?? 'solana-devnet') as SolanaChainSlug;
+  const chain = SOLANA_CHAINS[slug];
+  if (!chain) {
+    throw new Error(
+      `Unknown X402_SOLANA_CHAIN="${slug}". Valid: ${Object.keys(SOLANA_CHAINS).join(', ')}`,
+    );
+  }
+  return chain;
+}
+
+// Lazy-evaluated chain configs — deferred to first access so importing the
+// module never throws (even when the env var is invalid / not yet set).
+let _evmChain: (typeof EVM_CHAINS)[EvmChainSlug] | undefined;
+let _solanaChain: (typeof SOLANA_CHAINS)[SolanaChainSlug] | undefined;
+
+function lazyEvmChain() {
+  if (!_evmChain) _evmChain = getEvmChain();
+  return _evmChain;
+}
+
+function lazySolanaChain() {
+  if (!_solanaChain) _solanaChain = getSolanaChain();
+  return _solanaChain;
+}
+
+// ── Constants (lazy — evaluated on first access) ─────────
 export const ENV_FILE = '.env';
-export const USDC_CONTRACT_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as const;
 export const USDC_DECIMALS = 6;
-export const MIN_USDC_BALANCE = BigInt(10000); // $0.01 = 10000 raw units
+export const MIN_USDC_BALANCE = BigInt(5000); // $0.005 = 5000 raw units
 
 export const X402_BASE_URL = process.env.X402_BASE_URL || 'https://x402.quicknode.com';
-export const X402_AUTH_URL = `${X402_BASE_URL}/auth`;
 export const X402_CREDITS_URL = `${X402_BASE_URL}/credits`;
 export const X402_DRIP_URL = `${X402_BASE_URL}/drip`;
 
-export const BASE_SEPOLIA_CAIP2 = 'eip155:84532';
-export const BASE_SEPOLIA_CHAIN_ID = 84532;
-export const SOLANA_DEVNET_CAIP2 = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
-export const SOLANA_DEVNET_CHAIN_REF = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
-
 export type ChainType = 'evm' | 'solana';
-
-export const SIWX_STATEMENT =
-  'I accept the Quicknode Terms of Service: https://www.quicknode.com/terms';
-
-// Public RPC for balance checks (not metered, no x402)
-export const PUBLIC_RPC_URL = 'https://docs-demo.base-sepolia.quiknode.pro/';
 
 // ── Payment tracking ─────────────────────────────────────
 export type PaymentTracker = {
@@ -53,15 +136,7 @@ export function createPaymentTracker(): PaymentTracker {
   return { paymentResponseCount: 0, successfulPaymentCount: 0, totalFetchCount: 0 };
 }
 
-// ── JWT token state ──────────────────────────────────────
-// Shared mutable ref so helpers and callers see the same token
-export type TokenRef = { value: string | null };
-
-export function createTokenRef(): TokenRef {
-  return { value: null };
-}
-
-// ── Wallet ───────────────────────────────────────────────
+// ── Wallet (EVM) ─────────────────────────────────────────
 export function getOrCreatePrivateKey(): Hex {
   if (existsSync(ENV_FILE)) {
     const envContent = readFileSync(ENV_FILE, 'utf8');
@@ -80,136 +155,92 @@ export function getOrCreatePrivateKey(): Hex {
   return privateKey;
 }
 
-export function createWallet() {
-  const privateKey = getOrCreatePrivateKey();
-  const account = privateKeyToAccount(privateKey);
-  const walletClient = createWalletClient({
-    account,
-    chain: baseSepolia,
-    transport: http(),
-  });
-  return { privateKey, account, walletClient };
-}
-
-// ── SIWE Auth ────────────────────────────────────────────
-export async function authenticate(
-  walletClient: WalletClient,
-  tokenRef: TokenRef,
-): Promise<string> {
-  console.log('   Authenticating with SIWE...');
-
-  const siweMessage = new SiweMessage({
-    domain: new URL(X402_BASE_URL).host,
-    address: walletClient.account!.address,
-    statement: SIWX_STATEMENT,
-    uri: X402_BASE_URL,
-    version: '1',
-    chainId: BASE_SEPOLIA_CHAIN_ID,
-    nonce: generateNonce(),
-    issuedAt: new Date().toISOString(),
-  });
-
-  const message = siweMessage.prepareMessage();
-  const signature = await walletClient.signMessage({
-    account: walletClient.account!,
-    message,
-  });
-
-  const response = await fetch(X402_AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, signature }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Authentication failed: ${JSON.stringify(error)}`);
+// ── Wallet (Solana) ──────────────────────────────────────
+export function getOrCreateSolanaPrivateKey(): string {
+  if (existsSync(ENV_FILE)) {
+    const envContent = readFileSync(ENV_FILE, 'utf8');
+    const match = envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m);
+    if (match?.[1]) {
+      console.log('   Loaded existing Solana wallet from .env');
+      return match[1].trim();
+    }
   }
 
-  const { token, accountId, expiresAt } = (await response.json()) as {
-    token: string;
-    accountId: string;
-    expiresAt: string;
-  };
+  const keypair = nacl.sign.keyPair();
+  const secretKeyBase58 = bs58.encode(Buffer.from(keypair.secretKey));
+  const existingContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
+  const separator = existingContent && !existingContent.endsWith('\n') ? '\n' : '';
+  writeFileSync(ENV_FILE, `${existingContent}${separator}SOLANA_PRIVATE_KEY=${secretKeyBase58}\n`);
+  console.log('   Generated new Solana wallet and saved to .env');
+  return secretKeyBase58;
+}
 
-  tokenRef.value = token;
-  console.log(`   Authenticated as ${accountId}`);
-  console.log(`   Token expires: ${expiresAt}`);
-
-  return token;
+// ── Chain Detection ───────────────────────────────────────
+export function detectChainType(): ChainType {
+  // Explicit X402_EVM_CHAIN takes priority over .env heuristic
+  if (process.env.X402_EVM_CHAIN) return 'evm';
+  if (existsSync(ENV_FILE)) {
+    const envContent = readFileSync(ENV_FILE, 'utf8');
+    if (envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m)) return 'solana';
+  }
+  return 'evm';
 }
 
 // ── Credits ──────────────────────────────────────────────
-export async function getCredits(
-  tokenRef: TokenRef,
-): Promise<{ accountId: string; credits: number }> {
-  if (!tokenRef.value) throw new Error('Not authenticated - call authenticate() first');
 
+// The /credits endpoint is rate-limited in production, so the example scripts
+// only call it at startup and in the final summary — never inside tight loops.
+// A 429 backoff guard still protects against accidental bursts.
+let _creditsCache: { accountId: string; credits: number } | null = null;
+let _credits429BackoffUntilMs = 0;
+let _creditsInflight: Promise<{ accountId: string; credits: number }> | null = null;
+const CREDITS_429_BACKOFF_MS = 10_000;
+
+async function _fetchCreditsRaw(
+  token: string,
+): Promise<{ accountId: string; credits: number }> {
   const response = await fetch(X402_CREDITS_URL, {
     method: 'GET',
-    headers: { Authorization: `Bearer ${tokenRef.value}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
+
+  if (response.status === 429) {
+    _credits429BackoffUntilMs = Date.now() + CREDITS_429_BACKOFF_MS;
+    if (_creditsCache) return _creditsCache;
+    throw new Error('Rate limited (429) and no cached credits available');
+  }
 
   if (!response.ok) {
     if (response.status === 401) throw new Error('Token expired - re-authentication required');
     throw new Error(`Failed to get credits: ${response.status} ${await response.text()}`);
   }
 
-  return response.json();
+  const data: { accountId: string; credits: number } = await response.json();
+  _creditsCache = data;
+  return data;
 }
 
-// ── Credit Poller ────────────────────────────────────────
-// Non-blocking credit tracker. Call poll() without await — it fires a
-// background HTTP request that updates .credits and .delta when it resolves.
-// Used by WebSocket where awaiting getCredits() on every event blocks the
-// message handler and causes burst-pause-burst output.
-export type CreditPoller = {
-  /** Most recently observed credit count. */
-  credits: number;
-  /** Delta string for display, e.g. " (-1)" or " (+95)". Empty when unchanged. */
-  delta: string;
-  /** Fire-and-forget: starts a background credit fetch. */
-  poll(): void;
-};
+export async function getCredits(
+  getToken: () => string | null,
+  opts?: { forceRefresh?: boolean },
+): Promise<{ accountId: string; credits: number }> {
+  const token = getToken();
+  if (!token) throw new Error('Not authenticated - call authenticate() first');
 
-export function createCreditPoller(tokenRef: TokenRef): CreditPoller {
-  let latest = 0;
-  let deltaStr = '';
-  let inflight = false;
+  // During 429 backoff, return last-known value (unless forceRefresh)
+  if (!opts?.forceRefresh && _creditsCache && Date.now() < _credits429BackoffUntilMs) {
+    return _creditsCache;
+  }
 
-  return {
-    get credits() {
-      return latest;
-    },
-    set credits(v: number) {
-      latest = v;
-    },
-    get delta() {
-      const d = deltaStr;
-      // Clear after reading so the delta only shows once per update
-      deltaStr = '';
-      return d;
-    },
-    poll() {
-      // Skip if a request is already in flight — avoids piling up HTTP calls
-      if (inflight) return;
-      inflight = true;
-      getCredits(tokenRef)
-        .then((info) => {
-          const diff = latest - info.credits;
-          if (diff !== 0) {
-            deltaStr = ` (${diff > 0 ? '-' : '+'}${Math.abs(diff)})`;
-          }
-          latest = info.credits;
-        })
-        .catch(() => {
-          // Silently ignore — display stale value
-        })
-        .finally(() => {
-          inflight = false;
-        });
-    },
-  };
+  // Dedup in-flight requests (skip dedup when forceRefresh so we always get fresh data)
+  if (!opts?.forceRefresh && _creditsInflight) return _creditsInflight;
+
+  const promise = _fetchCreditsRaw(token).finally(() => {
+    if (_creditsInflight === promise) _creditsInflight = null;
+  });
+  _creditsInflight = promise;
+
+  return _creditsInflight;
 }
 
 // ── USDC Balance ─────────────────────────────────────────
@@ -217,14 +248,14 @@ export async function getUsdcBalanceRaw(address: string): Promise<bigint> {
   const paddedAddress = address.slice(2).toLowerCase().padStart(64, '0');
   const data = `0x70a08231${paddedAddress}`;
 
-  const response = await fetch(PUBLIC_RPC_URL, {
+  const response = await fetch(lazyEvmChain().docsDemo, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: Date.now(),
       method: 'eth_call',
-      params: [{ to: USDC_CONTRACT_ADDRESS, data }, 'latest'],
+      params: [{ to: lazyEvmChain().usdc, data }, 'latest'],
     }),
   });
 
@@ -242,10 +273,11 @@ export async function getUsdcBalanceRaw(address: string): Promise<bigint> {
 }
 
 // ── Faucet ───────────────────────────────────────────────
-export async function requestDripUsdc(tokenRef: TokenRef): Promise<boolean> {
+export async function requestDripUsdc(getToken: () => string | null): Promise<boolean> {
   console.log('   Requesting USDC from x402 drip...');
 
-  if (!tokenRef.value) {
+  const token = getToken();
+  if (!token) {
     console.error('   ERROR: Not authenticated');
     return false;
   }
@@ -254,7 +286,7 @@ export async function requestDripUsdc(tokenRef: TokenRef): Promise<boolean> {
     const response = await fetch(X402_DRIP_URL, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${tokenRef.value}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     });
@@ -299,15 +331,27 @@ export async function waitForBalance(
 }
 
 // ── Ensure funded ────────────────────────────────────────
-export async function ensureFunded(address: string, tokenRef: TokenRef): Promise<bigint> {
+export async function ensureFunded(
+  address: string,
+  getToken: () => string | null,
+): Promise<bigint> {
   let usdcBalance = await getUsdcBalanceRaw(address);
   console.log(`   USDC balance: ${formatUnits(usdcBalance, USDC_DECIMALS)} USDC`);
 
   if (usdcBalance < MIN_USDC_BALANCE) {
+    if (!lazyEvmChain().hasFaucet) {
+      console.log(
+        `\n   Insufficient USDC (need >= ${formatUnits(MIN_USDC_BALANCE, USDC_DECIMALS)} USDC)`,
+      );
+      console.log('   No faucet available for this chain. Ensure wallet is pre-funded.');
+      console.log(`   Fund manually: ${address}`);
+      process.exit(1);
+    }
+
     console.log(
       `\n   Insufficient USDC (need >= ${formatUnits(MIN_USDC_BALANCE, USDC_DECIMALS)} USDC)`,
     );
-    const faucetSuccess = await requestDripUsdc(tokenRef);
+    const faucetSuccess = await requestDripUsdc(getToken);
     if (faucetSuccess) {
       const gotBalance = await waitForBalance(address, MIN_USDC_BALANCE);
       if (!gotBalance) {
@@ -327,168 +371,87 @@ export async function ensureFunded(address: string, tokenRef: TokenRef): Promise
   return usdcBalance;
 }
 
-// ── WebSocket ─────────────────────────────────────────────
-export function createWebSocket(network: string, tokenRef: TokenRef): WebSocket {
-  if (!tokenRef.value) throw new Error('Not authenticated - call authenticate() first');
-  const wsUrl = `${X402_BASE_URL.replace('https', 'wss')}/${network}/ws?token=${tokenRef.value}`;
-  return new WebSocket(wsUrl);
-}
+// ── @quicknode/x402 Client ───────────────────────────────
 
-// ── Chain Detection ───────────────────────────────────────
-export function detectChainType(): ChainType {
-  if (existsSync(ENV_FILE)) {
-    const envContent = readFileSync(ENV_FILE, 'utf8');
-    if (envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m)) return 'solana';
-  }
-  return 'evm';
-}
+/** Create a @quicknode/x402 client configured for the detected chain type. */
+export async function createClientForChain(): Promise<{
+  client: QuicknodeX402Client;
+  chainType: ChainType;
+  walletAddress: string;
+  startBalance: bigint;
+}> {
+  const chainType = detectChainType();
 
-// ── Solana Wallet ─────────────────────────────────────────
-export type SolanaKeypair = {
-  secretKey: Uint8Array; // 64 bytes (private + public)
-  publicKey: Uint8Array; // 32 bytes
-  address: string; // Base58 public key
-};
+  if (chainType === 'solana') {
+    const secretKeyBase58 = getOrCreateSolanaPrivateKey();
+    const secretKey = bs58.decode(secretKeyBase58);
+    const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
+    const address = bs58.encode(Buffer.from(keypair.publicKey));
+    console.log(`   Wallet: ${address} (Solana)\n`);
 
-export function getOrCreateSolanaPrivateKey(): string {
-  if (existsSync(ENV_FILE)) {
-    const envContent = readFileSync(ENV_FILE, 'utf8');
-    const match = envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m);
-    if (match?.[1]) {
-      console.log('   Loaded existing Solana wallet from .env');
-      return match[1].trim();
-    }
+    const client = await createQuicknodeX402Client({
+      baseUrl: X402_BASE_URL,
+      network: lazySolanaChain().caip2,
+      svmPrivateKey: secretKeyBase58,
+      preAuth: true,
+    });
+
+    console.log(`   Authenticated as ${client.getAccountId()}`);
+    return { client, chainType, walletAddress: address, startBalance: 0n };
   }
 
-  const keypair = nacl.sign.keyPair();
-  const secretKeyBase58 = bs58.encode(Buffer.from(keypair.secretKey));
-  const existingContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
-  const separator = existingContent && !existingContent.endsWith('\n') ? '\n' : '';
-  writeFileSync(ENV_FILE, `${existingContent}${separator}SOLANA_PRIVATE_KEY=${secretKeyBase58}\n`);
-  console.log('   Generated new Solana wallet and saved to .env');
-  return secretKeyBase58;
-}
+  // EVM path
+  const privateKey = getOrCreatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  console.log(`   Wallet: ${account.address}\n`);
 
-export function createSolanaWallet(): SolanaKeypair {
-  const secretKeyBase58 = getOrCreateSolanaPrivateKey();
-  const secretKey = bs58.decode(secretKeyBase58);
-  const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
-  const address = bs58.encode(Buffer.from(keypair.publicKey));
-  return { secretKey: keypair.secretKey, publicKey: keypair.publicKey, address };
-}
-
-// ── SIWX/Solana Auth ──────────────────────────────────────
-function generateSiwxNonce(): string {
-  return randomBytes(16).toString('hex');
-}
-
-function formatSiwsMessage(params: {
-  domain: string;
-  address: string;
-  statement: string;
-  uri: string;
-  version: string;
-  chainRef: string;
-  nonce: string;
-  issuedAt: string;
-}): string {
-  return [
-    `${params.domain} wants you to sign in with your Solana account:`,
-    params.address,
-    '',
-    params.statement,
-    '',
-    `URI: ${params.uri}`,
-    `Version: ${params.version}`,
-    `Chain ID: ${params.chainRef}`,
-    `Nonce: ${params.nonce}`,
-    `Issued At: ${params.issuedAt}`,
-  ].join('\n');
-}
-
-export async function authenticateSolana(
-  keypair: SolanaKeypair,
-  tokenRef: TokenRef,
-): Promise<string> {
-  console.log('   Authenticating with SIWX/Solana...');
-
-  const message = formatSiwsMessage({
-    domain: new URL(X402_BASE_URL).host,
-    address: keypair.address,
-    statement: SIWX_STATEMENT,
-    uri: X402_BASE_URL,
-    version: '1',
-    chainRef: SOLANA_DEVNET_CHAIN_REF,
-    nonce: generateSiwxNonce(),
-    issuedAt: new Date().toISOString(),
+  const client = await createQuicknodeX402Client({
+    baseUrl: X402_BASE_URL,
+    network: lazyEvmChain().caip2,
+    evmPrivateKey: privateKey,
+    preAuth: true,
   });
 
-  const messageBytes = new TextEncoder().encode(message);
-  const signatureBytes = nacl.sign.detached(messageBytes, keypair.secretKey);
-  const signature = bs58.encode(Buffer.from(signatureBytes));
+  console.log(`   Authenticated as ${client.getAccountId()}`);
+  const startBalance = await ensureFunded(account.address, () => client.getToken());
 
-  const response = await fetch(X402_AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, signature, type: 'siwx' }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Authentication failed: ${JSON.stringify(error)}`);
-  }
-
-  const { token, accountId, expiresAt } = (await response.json()) as {
-    token: string;
-    accountId: string;
-    expiresAt: string;
-  };
-
-  tokenRef.value = token;
-  console.log(`   Authenticated as ${accountId}`);
-  console.log(`   Token expires: ${expiresAt}`);
-
-  return token;
+  return { client, chainType, walletAddress: account.address, startBalance };
 }
 
-// ── Solana x402 Fetch ────────────────────────────────────
-export async function createSolanaX402Fetch(
-  keypair: SolanaKeypair,
-  tokenRef: TokenRef,
+// ── Tracking Fetch ───────────────────────────────────────
+
+/** Wraps client.fetch with payment tracking and maxPayments cap. */
+export function createTrackingFetch(
+  client: QuicknodeX402Client,
   tracker: PaymentTracker,
-): Promise<typeof globalThis.fetch> {
-  // Base fetch that injects JWT
-  const authedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+): typeof globalThis.fetch {
+  // Bearer-only fetch for when maxPayments cap is reached — 402 passes through
+  const bearerOnlyFetch: typeof globalThis.fetch = async (input, init) => {
     if (input instanceof Request) {
       const request = input.clone();
-      if (tokenRef.value) request.headers.set('Authorization', `Bearer ${tokenRef.value}`);
-      return fetch(request);
+      const token = client.getToken();
+      if (token) request.headers.set('Authorization', `Bearer ${token}`);
+      return globalThis.fetch(request);
     }
     const headers = new Headers(init?.headers);
-    if (tokenRef.value) headers.set('Authorization', `Bearer ${tokenRef.value}`);
-    return fetch(input, { ...init, headers });
+    const token = client.getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return globalThis.fetch(input, { ...init, headers });
   };
 
-  // x402 v2 SVM payment handling
-  const signer = await createKeyPairSignerFromBytes(keypair.secretKey);
-  const svmScheme = new ExactSvmScheme(signer);
-  const client = new x402Client().register(SOLANA_DEVNET_CAIP2, svmScheme);
-  const x402Fetch = wrapFetchWithPayment(authedFetch, client);
-
-  // Tracking wrapper — same pattern as EVM
-  const trackingFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const fetchFn =
-      tracker.maxPayments !== undefined && tracker.successfulPaymentCount >= tracker.maxPayments
-        ? authedFetch
-        : x402Fetch;
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const atCap =
+      tracker.maxPayments !== undefined && tracker.successfulPaymentCount >= tracker.maxPayments;
+    const fetchFn = atCap ? bearerOnlyFetch : client.fetch;
     const response = await fetchFn(input, init);
     tracker.totalFetchCount++;
 
+    // Track PAYMENT-RESPONSE headers for display
     const paymentHeader = response.headers.get('PAYMENT-RESPONSE');
     if (paymentHeader) {
       tracker.paymentResponseCount++;
       try {
-        const decoded = decodePaymentResponseHeader(paymentHeader);
+        const decoded = JSON.parse(Buffer.from(paymentHeader, 'base64').toString());
         if (decoded.success) {
           tracker.successfulPaymentCount++;
           console.log(
@@ -499,7 +462,7 @@ export async function createSolanaX402Fetch(
             `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - FAILED: ${decoded.errorReason || 'unknown'}`,
           );
         }
-      } catch (_e) {
+      } catch {
         console.log(
           `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - raw: ${paymentHeader.slice(0, 50)}...`,
         );
@@ -508,164 +471,22 @@ export async function createSolanaX402Fetch(
 
     return response;
   };
-
-  return trackingFetch as typeof globalThis.fetch;
-}
-
-// ── Authed Fetch (JWT only, no x402 payment) ──────────────
-// Used in bootstrapped mode where credits are pre-purchased.
-export function createAuthedFetch(
-  tokenRef: TokenRef,
-  tracker: PaymentTracker,
-): typeof globalThis.fetch {
-  const authedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    if (input instanceof Request) {
-      const request = input.clone();
-      if (tokenRef.value) request.headers.set('Authorization', `Bearer ${tokenRef.value}`);
-      const response = await fetch(request);
-      tracker.totalFetchCount++;
-      return response;
-    }
-    const headers = new Headers(init?.headers);
-    if (tokenRef.value) headers.set('Authorization', `Bearer ${tokenRef.value}`);
-    const response = await fetch(input, { ...init, headers });
-    tracker.totalFetchCount++;
-    return response;
-  };
-  return authedFetch as typeof globalThis.fetch;
-}
-
-// ── x402 Fetch (EVM) ──────────────────────────────────────
-export function createX402Fetch(
-  walletClient: WalletClient,
-  tokenRef: TokenRef,
-  tracker: PaymentTracker,
-): typeof globalThis.fetch {
-  // Base fetch that injects JWT
-  const authedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    if (input instanceof Request) {
-      const request = input.clone();
-      if (tokenRef.value) request.headers.set('Authorization', `Bearer ${tokenRef.value}`);
-      return fetch(request);
-    }
-    const headers = new Headers(init?.headers);
-    if (tokenRef.value) headers.set('Authorization', `Bearer ${tokenRef.value}`);
-    return fetch(input, { ...init, headers });
-  };
-
-  // x402 v2 payment handling
-  const evmSigner = toClientEvmSigner({
-    address: walletClient.account!.address,
-    signTypedData: (params) =>
-      walletClient.signTypedData(params as Parameters<typeof walletClient.signTypedData>[0]),
-  });
-  const client = new x402Client().register(BASE_SEPOLIA_CAIP2, new ExactEvmScheme(evmSigner));
-  const x402Fetch = wrapFetchWithPayment(authedFetch, client);
-
-  // Tracking wrapper — reads headers without touching body (safe for streaming)
-  const trackingFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    // When maxPayments is reached, bypass x402 so 402 passes through to the caller
-    const fetchFn =
-      tracker.maxPayments !== undefined && tracker.successfulPaymentCount >= tracker.maxPayments
-        ? authedFetch
-        : x402Fetch;
-    const response = await fetchFn(input, init);
-    tracker.totalFetchCount++;
-
-    const paymentHeader = response.headers.get('PAYMENT-RESPONSE');
-    if (paymentHeader) {
-      tracker.paymentResponseCount++;
-      try {
-        const decoded = decodePaymentResponseHeader(paymentHeader);
-        if (decoded.success) {
-          tracker.successfulPaymentCount++;
-          console.log(
-            `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - SUCCESS tx: ${decoded.transaction?.slice(0, 20)}...`,
-          );
-        } else {
-          console.log(
-            `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - FAILED: ${decoded.errorReason || 'unknown'}`,
-          );
-        }
-      } catch (_e) {
-        console.log(
-          `   PAYMENT-RESPONSE #${tracker.paymentResponseCount} - raw: ${paymentHeader.slice(0, 50)}...`,
-        );
-      }
-    }
-
-    return response;
-  };
-
-  return trackingFetch as typeof globalThis.fetch;
 }
 
 // ── Example Setup (shared across all example scripts) ─────
-// Handles wallet creation, auth, faucet, and x402 fetch for both EVM and Solana.
 export type ExampleSetup = {
   chainType: ChainType;
   walletAddress: string;
   /** EVM USDC balance (0n for Solana — no EVM balance to track). */
   startBalance: bigint;
+  /** The @quicknode/x402 client instance. */
+  client: QuicknodeX402Client;
+  /** Tracking fetch that wraps client.fetch with payment counting + maxPayments cap. */
   x402Fetch: typeof globalThis.fetch;
-  /** Re-authenticate on 401. Chain-aware. */
-  reAuth: () => Promise<void>;
 };
 
-export async function setupExample(
-  tokenRef: TokenRef,
-  tracker: PaymentTracker,
-): Promise<ExampleSetup> {
-  const chainType = detectChainType();
-  const bootstrapped = process.env.X402_BOOTSTRAPPED === '1';
-
-  if (chainType === 'solana') {
-    const keypair = createSolanaWallet();
-    console.log(`   Wallet: ${keypair.address} (Solana)\n`);
-
-    if (bootstrapped && process.env.X402_JWT) {
-      tokenRef.value = process.env.X402_JWT;
-      console.log('   Using JWT from bootstrap.\n');
-    } else {
-      await authenticateSolana(keypair, tokenRef);
-    }
-
-    const x402Fetch = bootstrapped
-      ? createAuthedFetch(tokenRef, tracker)
-      : await createSolanaX402Fetch(keypair, tokenRef, tracker);
-
-    return {
-      chainType,
-      walletAddress: keypair.address,
-      startBalance: 0n,
-      x402Fetch,
-      reAuth: async () => {
-        await authenticateSolana(keypair, tokenRef);
-      },
-    };
-  }
-
-  // EVM path
-  const { account, walletClient } = createWallet();
-  console.log(`   Wallet: ${account.address}\n`);
-
-  if (bootstrapped && process.env.X402_JWT) {
-    tokenRef.value = process.env.X402_JWT;
-    console.log('   Using JWT from bootstrap.\n');
-  } else {
-    await authenticate(walletClient, tokenRef);
-  }
-
-  const startBalance = await ensureFunded(account.address, tokenRef);
-  const x402Fetch = createX402Fetch(walletClient, tokenRef, tracker);
-
-  return {
-    chainType,
-    walletAddress: account.address,
-    startBalance,
-    x402Fetch,
-    reAuth: async () => {
-      await authenticate(walletClient, tokenRef);
-    },
-  };
+export async function setupExample(tracker: PaymentTracker): Promise<ExampleSetup> {
+  const { client, chainType, walletAddress, startBalance } = await createClientForChain();
+  const x402Fetch = createTrackingFetch(client, tracker);
+  return { chainType, walletAddress, startBalance, client, x402Fetch };
 }

@@ -11,10 +11,7 @@
  */
 import { formatUnits } from 'viem';
 import {
-  createCreditPoller,
   createPaymentTracker,
-  createTokenRef,
-  createWebSocket,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -29,7 +26,6 @@ const TIMEOUT_MS = 120_000;
 const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean — suppress stray WebSocket/Node errors ──
@@ -47,18 +43,17 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Ensure credits ─────────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
 
   console.log(
     `   Mode: ${BOOTSTRAPPED ? 'bootstrapped (no payments)' : 'standalone (1 payment max)'}`,
@@ -78,7 +73,7 @@ async function main() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
     });
-    creditsInfo = await getCredits(tokenRef);
+    creditsInfo = await getCredits(getToken);
     console.log(`   Credits after payment: ${creditsInfo.credits}`);
   }
   console.log('='.repeat(60));
@@ -101,11 +96,6 @@ async function main() {
   let closeCode = 0;
   let closeReason = '';
 
-  // Non-blocking credit poller — fires-and-forgets HTTP requests so the
-  // message handler never blocks waiting for a credit check response.
-  const poller = createCreditPoller(tokenRef);
-  poller.credits = creditsBeforeWs;
-
   await new Promise<void>((resolve) => {
     let settled = false;
     const settle = () => {
@@ -122,7 +112,7 @@ async function main() {
 
     let ws: WebSocket;
     try {
-      ws = createWebSocket(WS_NETWORK, tokenRef);
+      ws = client.createWebSocket(WS_NETWORK);
     } catch (err) {
       clearTimeout(timeout);
       console.log(`   WebSocket creation failed: ${err}`);
@@ -171,10 +161,9 @@ async function main() {
           const blockNumber = parseInt(block.number, 16);
           const timestamp = new Date().toISOString().slice(11, 23);
 
-          poller.poll(); // fire-and-forget
           console.log(
             `   ${timestamp} Block #${eventsReceived}: height=${blockNumber} ` +
-              `hash=${block.hash?.slice(0, 18)}... | Credits: ${poller.credits}${poller.delta}`,
+              `hash=${block.hash?.slice(0, 18)}...`,
           );
 
           if (eventsReceived >= MAX_EVENTS) {
@@ -224,7 +213,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     // Token may have expired
   }

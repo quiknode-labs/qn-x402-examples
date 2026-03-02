@@ -1,6 +1,6 @@
-# Examples for using Quicknode Core Node API via x402 + SIWE / SIWX
+# Quicknode x402 Examples
 
-End-to-end demonstrations of the x402 payment protocol with SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports both **EVM** (Base Sepolia) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet USDC (EVM only), and makes paid requests.
+End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package for SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet USDC (Base Sepolia only), and makes paid requests.
 
 ## Overview
 
@@ -13,11 +13,15 @@ flowchart TB
     end
 
     subgraph EVM["EVM Path"]
-        EA[Generate EVM Wallet] --> EB[Authenticate with SIWE]
+        EA[Generate EVM Wallet] --> EX{X402_EVM_CHAIN?}
+        EX -->|base-sepolia| EB[Authenticate with SIWE]
+        EX -->|polygon-amoy| EB
+        EX -->|polygon-mainnet| EB
         EB --> EC[Receive JWT Token]
         EC --> ED{Check USDC Balance}
-        ED -->|Insufficient| EE[Request from /drip Faucet]
+        ED -->|Insufficient + hasFaucet| EE[Request from /drip Faucet]
         EE --> ED
+        ED -->|Insufficient + no faucet| EF[Pre-fund Required]
     end
 
     subgraph Solana["Solana Path"]
@@ -59,15 +63,15 @@ flowchart TB
    - **EVM:** Ethereum private key (`PRIVATE_KEY`)
    - **Solana:** Ed25519 keypair encoded as Base58 (`SOLANA_PRIVATE_KEY`)
 
-3. **SIWX Authentication** -- Creates and signs a Sign-In message, then exchanges it for a JWT token at the `/auth` endpoint. The JWT is valid for 1 hour.
-   - **EVM:** SIWE (EIP-4361) with `eth_sign`
-   - **Solana:** SIWX with Ed25519 signature (Base58-encoded)
+3. **SIWX Authentication** -- Uses `@quicknode/x402` with `preAuth: true` to handle SIWX authentication automatically (no manual SIWE/SIWX message construction). The JWT is valid for 1 hour.
+   - **EVM:** SIWE (EIP-4361) via `@quicknode/x402`
+   - **Solana:** SIWX with Ed25519 signature via `@quicknode/x402`
 
-4. **USDC Funding** -- Checks the wallet's USDC balance. If insufficient, requests testnet USDC from the `/drip` endpoint (backed by CDP faucet). **EVM only** -- Solana wallets must be pre-funded (see [Solana Prerequisites](#solana-prerequisites)).
+4. **USDC Funding** -- Checks the wallet's USDC balance. If insufficient, requests testnet USDC from the `/drip` endpoint (backed by CDP faucet). **Base Sepolia only** -- Polygon and Solana wallets must be pre-funded.
 
-5. **Paid Requests** -- Uses `@x402/fetch` with JWT authentication to make requests through the x402 worker. When credits are exhausted, the 402 response triggers automatic x402 payment signing.
-   - **EVM:** EIP-712 typed-data signature via `@x402/evm`
-   - **Solana:** Ed25519 signature via `@x402/svm`
+5. **Paid Requests** -- Uses `@quicknode/x402` client.fetch with automatic SIWX auth, x402 payment, and JWT session management. When credits are exhausted, the 402 response triggers automatic x402 payment signing.
+   - **EVM:** EIP-712 typed-data signature via `@quicknode/x402`
+   - **Solana:** Ed25519 signature via `@quicknode/x402`
 
 6. **Credit Tracking** -- Each script tracks payments, credits consumed, and USDC spent, then reports a summary.
 
@@ -81,9 +85,7 @@ flowchart TB
 
 The Solana flow requires manual keypair and USDC setup because `detectChainType()` only activates the Solana path when `.env` contains a non-empty `SOLANA_PRIVATE_KEY`, and the `/drip` faucet is EVM-only:
 
-1. **Set up a Solana wallet** -- Either generate a new keypair using the command below, or import an existing one by setting your private key (Base58-encoded) as `SOLANA_PRIVATE_KEY` in your `.env` file.
-
-   **To generate a new Solana keypair:**
+1. **Generate a keypair** -- Use the one-liner below (or any Solana keygen tool). This creates a `.env` with a new keypair and prints your wallet address:
    ```bash
    npx tsx -e "
    import nacl from 'tweetnacl'; import bs58 from 'bs58'; import { writeFileSync } from 'fs';
@@ -93,13 +95,7 @@ The Solana flow requires manual keypair and USDC setup because `detectChainType(
    "
    ```
 
-   **To import an existing wallet:**  
-   Edit your `.env` file and set:
-   ```
-   SOLANA_PRIVATE_KEY=<YOUR_BASE58_SECRET_KEY>
-   ```
-
-2. **Fund with Solana Devnet USDC** -- Get Solana Devnet USDC for your wallet address by visiting [faucet.circle.com](https://faucet.circle.com/). Enter your Solana wallet address and request Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). You do **not** need SOL -- the x402 facilitator pays transaction fees.
+2. **Fund with Solana Devnet USDC** -- Send Devnet USDC to the wallet address printed above. The USDC mint on Solana Devnet is `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`. You do **not** need SOL -- the x402 facilitator pays transaction fees.
 
 3. **Run** -- With USDC in the wallet, `npm start` bootstraps auth and launches all examples.
 
@@ -131,23 +127,24 @@ npm run start:grpc      # gRPC-Web demo (Flow)
 npm run start:ws        # WebSocket demo (Ethereum)
 ```
 
+### Polygon Amoy
+
+```bash
+# Requires pre-funded USDC (no /drip faucet for Polygon)
+X402_EVM_CHAIN=polygon-amoy npm start
+```
+
 ### Solana
 
 ```bash
 # Install dependencies
 npm install
 
-# Generate a Solana keypair or import an existing wallet (see Solana Prerequisites above)
-# Then fund your wallet address with Devnet USDC via faucet.circle.com
+# Generate a Solana keypair (see Solana Prerequisites above for the one-liner)
+# Then fund the printed wallet address with Devnet USDC
 
-# Run all 4 examples in parallel (via stmux)
+# Run all 4 examples
 npm start
-
-# Or run individual examples
-npm run start:jsonrpc   # JSON-RPC demo
-npm run start:rest      # REST demo (Aptos)
-npm run start:grpc      # gRPC-Web demo (Flow)
-npm run start:ws        # WebSocket demo (Ethereum)
 ```
 
 ## Configuration
@@ -158,6 +155,8 @@ Each script accepts a network override via environment variable:
 
 | Script | Env Variable | Default |
 |--------|-------------|---------|
+| All (EVM) | `X402_EVM_CHAIN` | `base-sepolia` (options: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`) |
+| All (Solana) | `X402_SOLANA_CHAIN` | `solana-devnet` (options: `solana-devnet`, `solana-mainnet`) |
 | `jsonrpc.ts` | `JSONRPC_NETWORK` | `base-sepolia` |
 | `rest.ts` | `REST_NETWORK` | `aptos-mainnet` |
 | `grpc.ts` | `X402_GRPC_BASE_URL` | `{X402_BASE_URL}/flow-mainnet` |
@@ -187,15 +186,15 @@ Defined in `lib/x402-helpers.ts`:
 | Setting | Value | Description |
 |---------|-------|-------------|
 | `MIN_USDC_BALANCE` | `$0.005` | Minimum EVM balance before requesting faucet |
-| `BASE_SEPOLIA_CHAIN_ID` | `84532` | Chain ID for SIWE |
-| `BASE_SEPOLIA_CAIP2` | `eip155:84532` | CAIP-2 identifier for Base Sepolia |
-| `SOLANA_DEVNET_CAIP2` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | CAIP-2 identifier for Solana Devnet |
-| `SIWX_STATEMENT` | Quicknode ToS | Required SIWX statement |
+| `EVM_CHAIN_ID` | Resolved from `X402_EVM_CHAIN` | Numeric chain ID for SIWE (e.g., `84532`, `80002`, `137`) |
+| `EVM_CAIP2` | Resolved from `X402_EVM_CHAIN` | CAIP-2 identifier (e.g., `eip155:84532`, `eip155:80002`) |
+| `EVM_USDC_ADDRESS` | Resolved from `X402_EVM_CHAIN` | USDC contract address for the selected chain |
+| `SOLANA_CAIP2` | Resolved from `X402_SOLANA_CHAIN` | CAIP-2 identifier for the selected Solana chain |
 
 ## Project Structure
 
 ```
-example/
+qn-x402-examples/
 ├── bootstrap.ts            # Orchestrator: chain detection, auth, funding, launches stmux
 ├── jsonrpc.ts              # JSON-RPC example (eth_blockNumber loop)
 ├── rest.ts                 # REST example (Aptos blockchain GET endpoints)
@@ -222,6 +221,8 @@ The scripts automatically manage the `.env` file:
 | `PRIVATE_KEY` | Auto-generated EVM wallet private key (hex) |
 | `SOLANA_PRIVATE_KEY` | Auto-generated Solana keypair (Base58-encoded 64-byte secret key) |
 | `X402_BASE_URL` | Override the x402 worker URL (default: `https://x402.quicknode.com`) |
+| `X402_EVM_CHAIN` | EVM auth/payment chain: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet` (default: `base-sepolia`) |
+| `X402_SOLANA_CHAIN` | Solana auth/payment chain: `solana-devnet`, `solana-mainnet` (default: `solana-devnet`) |
 | `X402_GRPC_BASE_URL` | Override the gRPC-Web endpoint (default: `{X402_BASE_URL}/flow-mainnet`) |
 | `JSONRPC_NETWORK` | Override JSON-RPC network (default: `base-sepolia`) |
 | `REST_NETWORK` | Override REST network (default: `aptos-mainnet`) |
@@ -233,35 +234,14 @@ The scripts automatically manage the `.env` file:
 
 All scripts share a common library that provides:
 
-### Common
-
 | Export | Description |
 |--------|-------------|
-| `detectChainType()` | Reads `.env` to determine `'evm'` or `'solana'` |
-| `setupExample(tokenRef, tracker)` | Unified setup for all scripts (chain-aware wallet, auth, fetch) |
-| `getCredits(tokenRef)` | Check credit balance via `/credits` |
-| `createCreditPoller(tokenRef)` | Non-blocking background credit updates (used by WebSocket) |
-| `createAuthedFetch(tokenRef, tracker)` | JWT-only fetch (no x402 payment), used in bootstrapped mode |
-| `createWebSocket(network, tokenRef)` | WebSocket factory with JWT auth via query param |
-| `TokenRef` | Shared mutable JWT reference (`{ value: string \| null }`) |
-| `PaymentTracker` | Tracks payment counts, fetch calls, and `maxPayments` cap |
-
-### EVM
-
-| Export | Description |
-|--------|-------------|
-| `createWallet()` | Generate/load EVM wallet from `.env` |
-| `authenticate(walletClient, tokenRef)` | SIWE auth, stores JWT in `TokenRef` |
-| `ensureFunded(address, tokenRef)` | Check USDC balance, request `/drip` if needed |
-| `createX402Fetch(walletClient, tokenRef, tracker)` | x402-wrapped fetch with EVM payment signing |
-
-### Solana
-
-| Export | Description |
-|--------|-------------|
-| `createSolanaWallet()` | Generate/load Solana keypair from `.env` |
-| `authenticateSolana(keypair, tokenRef)` | SIWX/Solana auth, stores JWT in `TokenRef` |
-| `createSolanaX402Fetch(keypair, tokenRef, tracker)` | x402-wrapped fetch with SVM payment signing |
+| `setupExample(tracker)` | Unified setup using `@quicknode/x402` (creates client, auth, funding) |
+| `createClientForChain()` | Create a `@quicknode/x402` client for the detected chain type |
+| `createTrackingFetch(client, tracker)` | Wraps `client.fetch` with payment tracking and maxPayments cap |
+| `getCredits(getToken)` | Check credit balance via `/credits` |
+| `createCreditPoller(getToken)` | Non-blocking background credit updates |
+| `PaymentTracker` | Tracks payment counts, fetch calls, and maxPayments cap |
 
 ## Script Details
 
@@ -293,6 +273,8 @@ Real-time subscription demo:
 
 ## Authentication Flow
 
+> **Note:** The `@quicknode/x402` package handles authentication automatically via `preAuth: true`. The manual flow below is shown for reference only.
+
 ### EVM (SIWE)
 
 ```typescript
@@ -302,7 +284,7 @@ const siweMessage = new SiweMessage({
   statement: SIWX_STATEMENT,
   uri: X402_BASE_URL,
   version: '1',
-  chainId: BASE_SEPOLIA_CHAIN_ID,
+  chainId: EVM_CHAIN_ID,
   nonce: generateNonce(),
   issuedAt: new Date().toISOString(),
 });
@@ -360,8 +342,8 @@ When you make an RPC call and credits are exhausted:
 
 1. **Request** -- Your request includes JWT Bearer token
 2. **402 Response** -- Worker returns `402 Payment Required` with `PAYMENT-REQUIRED` header
-3. **Payment** -- `@x402/fetch` automatically signs a payment authorization
-   - **EVM:** EIP-712 USDC payment on Base Sepolia
+3. **Payment** -- `@quicknode/x402` automatically signs a payment authorization
+   - **EVM:** EIP-712 USDC payment on the configured chain (Base Sepolia, Polygon Amoy, or Polygon Mainnet)
    - **Solana:** Ed25519 USDC payment on Solana Devnet
 4. **Settlement** -- The x402 facilitator settles the payment on-chain
 5. **Credits** -- Your account receives RPC credits (100 per payment on testnet)
@@ -387,8 +369,8 @@ JWT tokens expire after 1 hour. The examples automatically re-authenticate when 
 ### "Solana: no faucet available"
 
 The `/drip` endpoint only supports EVM wallets. To fund a Solana wallet with Devnet USDC:
-1. Visit [faucet.circle.com](https://faucet.circle.com/) to acquire Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`)
-2. Enter your Solana wallet address to receive USDC
+1. Acquire Devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`)
+2. Send USDC to your wallet address
 3. You do **not** need SOL -- the x402 facilitator pays transaction fees
 
 ### "Drip request failed" (EVM)
@@ -410,17 +392,12 @@ Check:
 
 | Package | Purpose |
 |---------|---------|
+| `@quicknode/x402` | Quicknode x402 client (SIWX auth, payment, session management) |
 | `viem` | Ethereum client library |
-| `siwe` | SIWE message creation (EVM) |
 | `tweetnacl` | Ed25519 cryptography (Solana) |
 | `bs58` | Base58 encoding for Solana keys and signatures |
-| `@solana/signers` | Solana keypair signing |
-| `@x402/fetch` | x402-enabled fetch wrapper |
-| `@x402/evm` | EVM payment signing (EIP-712) |
-| `@x402/svm` | SVM payment signing (Solana) |
 | `@connectrpc/connect` | Connect-RPC core |
 | `@connectrpc/connect-web` | Connect-RPC browser transport (custom fetch for x402) |
-| `@connectrpc/connect-node` | Connect-RPC Node.js transport |
 | `@bufbuild/protobuf` | Protobuf runtime |
 | `dotenv` | Environment variable management |
 | `tsx` | TypeScript execution |

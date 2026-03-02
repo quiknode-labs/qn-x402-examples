@@ -5,7 +5,6 @@ import { bytesToHex } from 'viem/utils';
 import { AccessAPI, BlockStatus } from './gen/flow/access/access_pb.js';
 import {
   createPaymentTracker,
-  createTokenRef,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -18,7 +17,6 @@ const X402_GRPC_BASE_URL = `${process.env.X402_GRPC_BASE_URL || `${X402_BASE_URL
 const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean — suppress stray gRPC/Node errors ──
@@ -54,10 +52,8 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Create connect-web gRPC client ───────────────────────
   // Debug wrapper: log error response bodies (worker returns JSON on 502)
@@ -83,10 +79,11 @@ async function main() {
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
   console.log('='.repeat(60));
 
   // Reset counters for the test run
@@ -106,7 +103,6 @@ async function main() {
   }
 
   let unaryCalls = 0;
-  let lastCredits = initialCredits;
 
   // ── Phase 1: Unary gRPC calls ─────────────────────────
   console.log('\n-- Phase 1: Unary gRPC-Web Calls --\n');
@@ -115,12 +111,7 @@ async function main() {
   try {
     await flowClient.ping({});
     unaryCalls++;
-    creditsInfo = await getCredits(tokenRef);
-    const creditDelta1 = lastCredits - creditsInfo.credits;
-    const creditInfo1 =
-      creditDelta1 !== 0 ? ` (${creditDelta1 > 0 ? '-' : '+'}${Math.abs(creditDelta1)})` : '';
-    lastCredits = creditsInfo.credits;
-    console.log(`   [1] Ping                  OK  | Credits: ${creditsInfo.credits}${creditInfo1}`);
+    console.log(`   [1] Ping                  OK`);
   } catch (err: any) {
     console.error(`   [1] Ping                  FAILED: ${err.message}`);
   }
@@ -129,11 +120,6 @@ async function main() {
   try {
     const blockRes = await flowClient.getLatestBlock({ isSealed: true });
     unaryCalls++;
-    creditsInfo = await getCredits(tokenRef);
-    const creditDelta2 = lastCredits - creditsInfo.credits;
-    const creditInfo2 =
-      creditDelta2 !== 0 ? ` (${creditDelta2 > 0 ? '-' : '+'}${Math.abs(creditDelta2)})` : '';
-    lastCredits = creditsInfo.credits;
     const block = blockRes.block;
     if (block) {
       const ts = block.timestamp
@@ -141,7 +127,6 @@ async function main() {
         : 'n/a';
       console.log(`   [2] GetLatestBlock        OK  | Height: ${block.height} | Time: ${ts}`);
       console.log(`       Block ID: ${bytesToHex(block.id).slice(0, 34)}...`);
-      console.log(`       Credits: ${creditsInfo.credits}${creditInfo2}`);
     } else {
       console.log(`   [2] GetLatestBlock        OK  | (no block in response)`);
     }
@@ -153,7 +138,7 @@ async function main() {
   console.log(`\n${'='.repeat(60)}`);
   console.log('-- Phase 2: Streaming gRPC-Web (SubscribeBlocksFromLatest) --');
 
-  creditsInfo = await getCredits(tokenRef);
+  creditsInfo = await getCredits(getToken);
   const creditsBeforeStream = creditsInfo.credits;
   console.log(`   Credits before stream: ${creditsBeforeStream}`);
 
@@ -162,12 +147,12 @@ async function main() {
   } else if (creditsBeforeStream <= 0 && tracker.successfulPaymentCount === 0) {
     console.log('   No credits — stream request will trigger x402 payment\n');
   } else {
-    console.log(`   Streaming blocks until credits exhausted...\n`);
+    console.log(`   Streaming blocks until credits exhausted or 500 blocks...\n`);
   }
 
   let blocksReceived = 0;
   let streamError: string | null = null;
-  const streamAbort = new AbortController(); // F1: graceful stream cancellation
+  const streamAbort = new AbortController();
 
   // Retry wrapper — handles re-auth, transient failures, and 402 on stream open
   let streamAttempts = 0;
@@ -188,31 +173,10 @@ async function main() {
           : '';
 
         if (block) {
-          // Synchronous credit check — blocks arrive every 6-11s so the
-          // ~100-300ms HTTP call adds negligible delay.
-          let creditDisplay = `${lastCredits}`;
-          try {
-            creditsInfo = await getCredits(tokenRef);
-            const creditDelta = lastCredits - creditsInfo.credits;
-            const creditInfo =
-              creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
-            lastCredits = creditsInfo.credits;
-            creditDisplay = `${creditsInfo.credits}${creditInfo}`;
-          } catch {
-            // Credit check failed — display last known value
-          }
-
           const local = new Date().toISOString().slice(11, 23);
           console.log(
-            `   ${local} Block #${blocksReceived}: height=${block.height} time=${ts} | Credits: ${creditDisplay}`,
+            `   ${local} Block #${blocksReceived}: height=${block.height} time=${ts}`,
           );
-        }
-
-        // Exit when credits exhausted
-        if (lastCredits <= 0) {
-          console.log('\n   All credits consumed. Demo complete!');
-          streamAbort.abort();
-          break;
         }
 
         // Safety limit
@@ -248,7 +212,7 @@ async function main() {
         streamAttempts < MAX_STREAM_ATTEMPTS
       ) {
         console.log('   Token expired mid-stream, re-authenticating...');
-        await reAuth();
+        await client.authenticate();
         continue; // retry stream
       }
 
@@ -286,7 +250,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     console.log('   (Could not fetch final credits)');
   }

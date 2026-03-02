@@ -18,7 +18,6 @@
 import { formatUnits } from 'viem';
 import {
   createPaymentTracker,
-  createTokenRef,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -35,7 +34,6 @@ const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 const APTOS_FRAMEWORK = '0x1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean ────────────────────────────────────
@@ -74,18 +72,17 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
   console.log('='.repeat(60));
 
   // Reset counters for the test run
@@ -119,11 +116,9 @@ async function main() {
       ledger_version: string;
       block_height: string;
     };
-    creditsInfo = await getCredits(tokenRef);
     console.log(
       `   [${callsMade}] GET /v1/                      ` +
-        `chain=${ledger.chain_id} epoch=${ledger.epoch} height=${ledger.block_height}`.padEnd(50) +
-        ` | Credits: ${creditsInfo.credits}`,
+        `chain=${ledger.chain_id} epoch=${ledger.epoch} height=${ledger.block_height}`,
     );
   } catch (err: any) {
     console.error(`   [${callsMade + 1}] GET /v1/  FAILED: ${err.message}`);
@@ -135,8 +130,6 @@ async function main() {
     const { data: ledgerData } = await restGet(x402Fetch, 'v1/');
     callsMade++;
     const currentHeight = Number((ledgerData as { block_height: string }).block_height);
-    creditsInfo = await getCredits(tokenRef);
-
     const targetHeight = Math.max(1, currentHeight - 5);
     const { data } = await restGet(
       x402Fetch,
@@ -149,13 +142,9 @@ async function main() {
       first_version: string;
       last_version: string;
     };
-    creditsInfo = await getCredits(tokenRef);
     console.log(
       `   [${callsMade}] GET /v1/blocks/by_height/${targetHeight}  ` +
-        `hash=${block.block_hash.slice(0, 16)}... versions=${block.first_version}-${block.last_version}`.padEnd(
-          50,
-        ) +
-        ` | Credits: ${creditsInfo.credits}`,
+        `hash=${block.block_hash.slice(0, 16)}... versions=${block.first_version}-${block.last_version}`,
     );
   } catch (err: any) {
     console.error(`   [${callsMade + 1}] GET /v1/blocks/by_height/  FAILED: ${err.message}`);
@@ -166,11 +155,9 @@ async function main() {
     const { data } = await restGet(x402Fetch, `v1/accounts/${APTOS_FRAMEWORK}`);
     callsMade++;
     const acct = data as { sequence_number: string; authentication_key: string };
-    creditsInfo = await getCredits(tokenRef);
     console.log(
       `   [${callsMade}] GET /v1/accounts/0x1          ` +
-        `seq=${acct.sequence_number} auth_key=[REDACTED]`.padEnd(50) +
-        ` | Credits: ${creditsInfo.credits}`,
+        `seq=${acct.sequence_number} auth_key=[REDACTED]`,
     );
   } catch (err: any) {
     console.error(`   [${callsMade + 1}] GET /v1/accounts/0x1  FAILED: ${err.message}`);
@@ -182,11 +169,9 @@ async function main() {
     callsMade++;
     const resources = data as { type: string }[];
     const types = resources.map((r) => r.type.split('::').pop()).slice(0, 3);
-    creditsInfo = await getCredits(tokenRef);
     console.log(
       `   [${callsMade}] GET /v1/accounts/0x1/resources ` +
-        `${resources.length} resources [${types.join(', ')}...]`.padEnd(50) +
-        ` | Credits: ${creditsInfo.credits}`,
+        `${resources.length} resources [${types.join(', ')}...]`,
     );
   } catch (err: any) {
     console.error(`   [${callsMade + 1}] GET /v1/accounts/.../resources  FAILED: ${err.message}`);
@@ -197,11 +182,9 @@ async function main() {
     const { data } = await restGet(x402Fetch, 'v1/transactions/by_version/1');
     callsMade++;
     const tx = data as { type: string; hash: string; version: string };
-    creditsInfo = await getCredits(tokenRef);
     console.log(
       `   [${callsMade}] GET /v1/transactions/by_version/1  ` +
-        `type=${tx.type} hash=${tx.hash.slice(0, 16)}...`.padEnd(50) +
-        ` | Credits: ${creditsInfo.credits}`,
+        `type=${tx.type} hash=${tx.hash.slice(0, 16)}...`,
     );
   } catch (err: any) {
     console.error(
@@ -214,7 +197,7 @@ async function main() {
   console.log(`\n${'='.repeat(60)}`);
   console.log('-- Phase 2: Credit Consumption Loop (GET /v1/ ledger info) --');
 
-  creditsInfo = await getCredits(tokenRef);
+  creditsInfo = await getCredits(getToken);
   const creditsBeforeLoop = creditsInfo.credits;
   console.log(`   Credits before loop: ${creditsBeforeLoop}`);
 
@@ -228,7 +211,6 @@ async function main() {
   }
 
   let loopRequests = 0;
-  let lastCredits = creditsBeforeLoop;
 
   while (true) {
     try {
@@ -237,25 +219,10 @@ async function main() {
 
       const ledger = data as { block_height: string; ledger_version: string };
 
-      // Check credits to show remaining
-      creditsInfo = await getCredits(tokenRef);
-
-      // Detect credit changes
-      const creditDelta = lastCredits - creditsInfo.credits;
-      const creditInfo =
-        creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
-      lastCredits = creditsInfo.credits;
-
       const timestamp = new Date().toISOString().slice(11, 23);
       console.log(
-        `   ${timestamp} Request #${loopRequests}: height=${ledger.block_height} ver=${ledger.ledger_version} | Credits: ${creditsInfo.credits}${creditInfo}`,
+        `   ${timestamp} Request #${loopRequests}: height=${ledger.block_height} ver=${ledger.ledger_version}`,
       );
-
-      // Stop when credits exhausted
-      if (creditsInfo.credits <= 0 && (BOOTSTRAPPED || tracker.successfulPaymentCount >= 1)) {
-        console.log('\n   All credits consumed. Demo complete!');
-        break;
-      }
 
       // Safety limit
       if (loopRequests >= 500) {
@@ -274,7 +241,7 @@ async function main() {
       // Handle 401 by re-authenticating
       if (error.message?.includes('401') || error.message?.includes('Token expired')) {
         console.log('   Token expired, re-authenticating...');
-        await reAuth();
+        await client.authenticate();
         continue;
       }
       console.error(`   Request #${loopRequests + 1} failed:`, error.message);
@@ -294,7 +261,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     console.log('   (Could not fetch final credits)');
   }

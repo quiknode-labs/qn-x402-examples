@@ -2,35 +2,24 @@
  * Bootstrap — runs wallet setup, auth, and faucet funding once before
  * launching all 4 example scripts via stmux.
  *
- * Detects chain type from .env:
- *   - SOLANA_PRIVATE_KEY → SIWX/Solana auth (no faucet)
- *   - PRIVATE_KEY (or nothing) → SIWE/EVM auth (with faucet)
- *
- * This avoids a race condition where 4 concurrent scripts each try to
- * create a wallet key, write to .env, and hit the faucet simultaneously.
+ * Uses @quicknode/x402 for SIWX authentication and x402 payment handling.
+ * Each example script independently authenticates (preAuth: true), but
+ * bootstrap ensures wallet creation, funding, and initial credit purchase
+ * happen once to avoid race conditions.
  */
 import { execSync } from 'node:child_process';
-import { formatUnits } from 'viem';
 import {
-  authenticate,
-  authenticateSolana,
-  createPaymentTracker,
-  createSolanaWallet,
-  createSolanaX402Fetch,
-  createTokenRef,
-  createWallet,
-  createX402Fetch,
+  createClientForChain,
   detectChainType,
-  ensureFunded,
   getCredits,
-  type TokenRef,
-  USDC_DECIMALS,
+  getEvmChain,
+  getSolanaChain,
   X402_BASE_URL,
 } from './lib/x402-helpers.js';
 
 async function purchaseCredits(
   x402Fetch: typeof globalThis.fetch,
-  tokenRef: TokenRef,
+  getToken: () => string | null,
   network: string,
 ) {
   const maxRetries = 3;
@@ -71,9 +60,9 @@ async function purchaseCredits(
   const maxWaitMs = 30_000;
   const pollIntervalMs = 2_000;
   const start = Date.now();
-  let creditsInfo = await getCredits(tokenRef);
+  let creditsInfo = await getCredits(getToken);
   while (Date.now() - start < maxWaitMs) {
-    creditsInfo = await getCredits(tokenRef);
+    creditsInfo = await getCredits(getToken, { forceRefresh: true });
     if (creditsInfo.credits > 0) break;
     console.log('   Waiting for credits to appear...');
     await new Promise((r) => setTimeout(r, pollIntervalMs));
@@ -86,62 +75,6 @@ async function purchaseCredits(
   return creditsInfo;
 }
 
-async function bootstrapEvm() {
-  // Step 1: Wallet (creates .env if missing)
-  const { account, walletClient } = createWallet();
-  console.log(`   Wallet: ${account.address}`);
-
-  // Step 2: Authenticate (validates JWT works)
-  const tokenRef = createTokenRef();
-  await authenticate(walletClient, tokenRef);
-
-  // Step 3: Ensure funded (faucet drip if needed)
-  const balance = await ensureFunded(account.address, tokenRef);
-  console.log(`   USDC:   ${formatUnits(balance, USDC_DECIMALS)}`);
-
-  // Step 4: Ensure credits > 0 (purchase if needed)
-  let creditsInfo = await getCredits(tokenRef);
-  console.log(`   Credits: ${creditsInfo.credits}`);
-
-  if (creditsInfo.credits <= 0) {
-    console.log('   No credits — purchasing via x402 payment...');
-    const tracker = createPaymentTracker();
-    const x402Fetch = createX402Fetch(walletClient, tokenRef, tracker);
-    creditsInfo = await purchaseCredits(x402Fetch, tokenRef, 'base-sepolia');
-    console.log(`   Credits after purchase: ${creditsInfo.credits}`);
-  }
-
-  return tokenRef;
-}
-
-async function bootstrapSolana() {
-  // Step 1: Wallet (creates .env if missing)
-  const keypair = createSolanaWallet();
-  console.log(`   Wallet: ${keypair.address}`);
-
-  // Step 2: Authenticate via SIWX/Solana
-  const tokenRef = createTokenRef();
-  await authenticateSolana(keypair, tokenRef);
-
-  // Step 3: No faucet for Solana (drip is EVM-only)
-  console.log('   Solana: no faucet available (drip is EVM-only)');
-  console.log('   Wallet must be pre-funded with Solana devnet USDC to purchase credits.');
-
-  // Step 4: Check credits
-  let creditsInfo = await getCredits(tokenRef);
-  console.log(`   Credits: ${creditsInfo.credits}`);
-
-  if (creditsInfo.credits <= 0) {
-    console.log('   No credits — purchasing via x402 SVM payment...');
-    const tracker = createPaymentTracker();
-    const x402Fetch = await createSolanaX402Fetch(keypair, tokenRef, tracker);
-    creditsInfo = await purchaseCredits(x402Fetch, tokenRef, 'solana-devnet');
-    console.log(`   Credits after purchase: ${creditsInfo.credits}`);
-  }
-
-  return tokenRef;
-}
-
 async function main() {
   const chainType = detectChainType();
 
@@ -149,15 +82,32 @@ async function main() {
     `\n  x402 Bootstrap — ${chainType === 'solana' ? 'Solana' : 'EVM'} wallet, auth & funding\n`,
   );
   console.log('='.repeat(60));
-  console.log(`   Chain:  ${chainType}`);
+  const chainDetail =
+    chainType === 'evm'
+      ? ` (${process.env.X402_EVM_CHAIN ?? 'base-sepolia'})`
+      : ` (${process.env.X402_SOLANA_CHAIN ?? 'solana-devnet'})`;
+  console.log(`   Chain:  ${chainType}${chainDetail}`);
   console.log(`   Target: ${X402_BASE_URL}`);
 
-  const tokenRef = chainType === 'solana' ? await bootstrapSolana() : await bootstrapEvm();
+  // Wallet creation, authentication, and funding handled by createClientForChain
+  const { client } = await createClientForChain();
+  const getToken = () => client.getToken();
+
+  // Ensure credits > 0 (purchase if needed)
+  let creditsInfo = await getCredits(getToken);
+  console.log(`   Credits: ${creditsInfo.credits}`);
+
+  if (creditsInfo.credits <= 0) {
+    console.log('   No credits — purchasing via x402 payment...');
+    const network = chainType === 'evm' ? getEvmChain().rpcSlug : getSolanaChain().rpcSlug;
+    creditsInfo = await purchaseCredits(client.fetch, getToken, network);
+    console.log(`   Credits after purchase: ${creditsInfo.credits}`);
+  }
 
   console.log('='.repeat(60));
   console.log('   Bootstrap complete. Launching examples...\n');
 
-  // Step 5: Launch stmux with all 4 examples (bootstrapped = no x402 payments)
+  // Launch stmux with all 4 examples (bootstrapped = no x402 payments)
   execSync(
     'npx --yes stmux -- ' +
       '[ [ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ] ' +
@@ -165,7 +115,7 @@ async function main() {
     {
       stdio: 'inherit',
       cwd: import.meta.dirname,
-      env: { ...process.env, X402_BOOTSTRAPPED: '1', X402_JWT: tokenRef.value! },
+      env: { ...process.env, X402_BOOTSTRAPPED: '1' },
     },
   );
 }

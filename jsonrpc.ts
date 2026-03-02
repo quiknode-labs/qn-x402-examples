@@ -11,7 +11,6 @@
 import { formatUnits } from 'viem';
 import {
   createPaymentTracker,
-  createTokenRef,
   getCredits,
   getUsdcBalanceRaw,
   setupExample,
@@ -25,7 +24,6 @@ const JSONRPC_URL = `${X402_BASE_URL}/${JSONRPC_NETWORK}`;
 const BOOTSTRAPPED = process.env.X402_BOOTSTRAPPED === '1';
 
 // ── Shared state ─────────────────────────────────────────
-const tokenRef = createTokenRef();
 const tracker = createPaymentTracker();
 
 // ── Always exit clean ────────────────────────────────────
@@ -71,18 +69,17 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, x402Fetch, reAuth } = await setupExample(
-    tokenRef,
-    tracker,
-  );
+  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
+  const getToken = () => client.getToken();
 
   // ── Check initial credits ────────────────────────────────
   console.log(`\n${'='.repeat(60)}`);
   console.log('   Checking credits...');
-  let creditsInfo = await getCredits(tokenRef);
+  const creditsInfo = await getCredits(getToken);
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
+  console.log('   (Checked at start/end only — /credits is rate-limited)');
   console.log('='.repeat(60));
 
   // Reset counters for the test run
@@ -108,7 +105,6 @@ async function main() {
   }
 
   let requestCount = 0;
-  let lastCredits = initialCredits;
 
   while (true) {
     try {
@@ -116,25 +112,8 @@ async function main() {
       requestCount++;
       const blockNumber = BigInt(result as string);
 
-      // Check credits
-      creditsInfo = await getCredits(tokenRef);
-
-      // Detect credit changes
-      const creditDelta = lastCredits - creditsInfo.credits;
-      const creditInfo =
-        creditDelta !== 0 ? ` (${creditDelta > 0 ? '-' : '+'}${Math.abs(creditDelta)})` : '';
-      lastCredits = creditsInfo.credits;
-
       const timestamp = new Date().toISOString().slice(11, 23);
-      console.log(
-        `   ${timestamp} Request #${requestCount}: Block ${blockNumber} | Credits: ${creditsInfo.credits}${creditInfo}`,
-      );
-
-      // Stop when credits exhausted
-      if (creditsInfo.credits <= 0 && (BOOTSTRAPPED || tracker.successfulPaymentCount >= 1)) {
-        console.log('\n   All credits consumed. Demo complete!');
-        break;
-      }
+      console.log(`   ${timestamp} Request #${requestCount}: Block ${blockNumber}`);
 
       // Safety limit
       if (requestCount >= 500) {
@@ -153,7 +132,7 @@ async function main() {
       // Handle 401 by re-authenticating
       if (error.message?.includes('401') || error.message?.includes('Token expired')) {
         console.log('   Token expired, re-authenticating...');
-        await reAuth();
+        await client.authenticate();
         continue;
       }
       console.error(`   Request #${requestCount + 1} failed:`, error.message);
@@ -173,7 +152,7 @@ async function main() {
 
   let finalCredits = { credits: 0 };
   try {
-    finalCredits = await getCredits(tokenRef);
+    finalCredits = await getCredits(getToken, { forceRefresh: true });
   } catch {
     console.log('   (Could not fetch final credits)');
   }
