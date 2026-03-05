@@ -5,10 +5,18 @@ import { config } from 'dotenv';
 import nacl from 'tweetnacl';
 import { formatUnits, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { base, baseSepolia, polygon, polygonAmoy } from 'viem/chains';
+import { base, baseSepolia, polygon, polygonAmoy, xLayer } from 'viem/chains';
+import { defineChain } from 'viem';
 
 // Load environment variables
 config();
+
+const xlayerTestnet = defineChain({
+  id: 1952,
+  name: 'X Layer Testnet',
+  nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 },
+  rpcUrls: { default: { http: ['https://testrpc.xlayer.tech'] } },
+});
 
 // ── EVM Chain Config Registry ────────────────────────────
 
@@ -18,7 +26,7 @@ export const EVM_CHAINS = {
     caip2: 'eip155:84532',
     numericId: 84532,
     viemChain: baseSepolia,
-    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    paymentToken: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     rpcSlug: 'base-sepolia',
     docsDemo: 'https://docs-demo.base-sepolia.quiknode.pro/',
     hasFaucet: true,
@@ -27,7 +35,7 @@ export const EVM_CHAINS = {
     caip2: 'eip155:8453',
     numericId: 8453,
     viemChain: base,
-    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    paymentToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     rpcSlug: 'base-mainnet',
     docsDemo: 'https://docs-demo.base-mainnet.quiknode.pro/',
     hasFaucet: false,
@@ -36,7 +44,7 @@ export const EVM_CHAINS = {
     caip2: 'eip155:80002',
     numericId: 80002,
     viemChain: polygonAmoy,
-    usdc: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+    paymentToken: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
     rpcSlug: 'matic-amoy',
     docsDemo: 'https://docs-demo.matic-amoy.quiknode.pro/',
     hasFaucet: false,
@@ -45,9 +53,27 @@ export const EVM_CHAINS = {
     caip2: 'eip155:137',
     numericId: 137,
     viemChain: polygon,
-    usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    paymentToken: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     rpcSlug: 'matic-mainnet',
     docsDemo: 'https://docs-demo.matic.quiknode.pro/',
+    hasFaucet: false,
+  },
+  'xlayer-mainnet': {
+    caip2: 'eip155:196',
+    numericId: 196,
+    viemChain: xLayer,
+    paymentToken: '0x4ae46a509F6b1D9056937BA4500cb143933D2dc8',
+    rpcSlug: 'xlayer-mainnet',
+    docsDemo: 'https://docs-demo.xlayer-mainnet.quiknode.pro/',
+    hasFaucet: false,
+  },
+  'xlayer-testnet': {
+    caip2: 'eip155:1952',
+    numericId: 1952,
+    viemChain: xlayerTestnet,
+    paymentToken: '0xF0863D7A29a55d0c4263c11bFac754312ff078DF',
+    rpcSlug: 'xlayer-testnet',
+    docsDemo: 'https://docs-demo.xlayer-testnet.quiknode.pro/',
     hasFaucet: false,
   },
 } as const;
@@ -72,13 +98,13 @@ export const SOLANA_CHAINS = {
   'solana-devnet': {
     caip2: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
     chainRef: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
-    usdc: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    paymentToken: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
     rpcSlug: 'solana-devnet',
   },
   'solana-mainnet': {
     caip2: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
     chainRef: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
-    usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    paymentToken: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     rpcSlug: 'solana-mainnet',
   },
 } as const;
@@ -113,8 +139,8 @@ function lazySolanaChain() {
 
 // ── Constants (lazy — evaluated on first access) ─────────
 export const ENV_FILE = '.env';
-export const USDC_DECIMALS = 6;
-export const MIN_USDC_BALANCE = BigInt(5000); // $0.005 = 5000 raw units
+export const TOKEN_DECIMALS = 6;
+export const MIN_TOKEN_BALANCE = BigInt(5000); // $0.005 = 5000 raw units
 
 export const X402_BASE_URL = process.env.X402_BASE_URL || 'https://x402.quicknode.com';
 export const X402_CREDITS_URL = `${X402_BASE_URL}/credits`;
@@ -243,8 +269,8 @@ export async function getCredits(
   return _creditsInflight;
 }
 
-// ── USDC Balance ─────────────────────────────────────────
-export async function getUsdcBalanceRaw(address: string): Promise<bigint> {
+// ── Token Balance ────────────────────────────────────────
+export async function getTokenBalanceRaw(address: string): Promise<bigint> {
   const paddedAddress = address.slice(2).toLowerCase().padStart(64, '0');
   const data = `0x70a08231${paddedAddress}`;
 
@@ -255,7 +281,7 @@ export async function getUsdcBalanceRaw(address: string): Promise<bigint> {
       jsonrpc: '2.0',
       id: Date.now(),
       method: 'eth_call',
-      params: [{ to: lazyEvmChain().usdc, data }, 'latest'],
+      params: [{ to: lazyEvmChain().paymentToken, data }, 'latest'],
     }),
   });
 
@@ -273,8 +299,8 @@ export async function getUsdcBalanceRaw(address: string): Promise<bigint> {
 }
 
 // ── Faucet ───────────────────────────────────────────────
-export async function requestDripUsdc(getToken: () => string | null): Promise<boolean> {
-  console.log('   Requesting USDC from x402 drip...');
+export async function requestDrip(getToken: () => string | null): Promise<boolean> {
+  console.log('   Requesting tokens from x402 drip...');
 
   const token = getToken();
   if (!token) {
@@ -318,11 +344,11 @@ export async function waitForBalance(
   const startTime = Date.now();
   const checkIntervalMs = 5000;
 
-  console.log(`   Waiting for USDC balance >= ${formatUnits(minBalance, USDC_DECIMALS)} USDC...`);
+  console.log(`   Waiting for token balance >= ${formatUnits(minBalance, TOKEN_DECIMALS)}...`);
 
   while (Date.now() - startTime < maxWaitMs) {
-    const balance = await getUsdcBalanceRaw(address);
-    console.log(`   Current balance: ${formatUnits(balance, USDC_DECIMALS)} USDC`);
+    const balance = await getTokenBalanceRaw(address);
+    console.log(`   Current balance: ${formatUnits(balance, TOKEN_DECIMALS)}`);
     if (balance >= minBalance) return true;
     await new Promise((resolve) => setTimeout(resolve, checkIntervalMs));
   }
@@ -335,13 +361,13 @@ export async function ensureFunded(
   address: string,
   getToken: () => string | null,
 ): Promise<bigint> {
-  let usdcBalance = await getUsdcBalanceRaw(address);
-  console.log(`   USDC balance: ${formatUnits(usdcBalance, USDC_DECIMALS)} USDC`);
+  let tokenBalance = await getTokenBalanceRaw(address);
+  console.log(`   Token balance: ${formatUnits(tokenBalance, TOKEN_DECIMALS)}`);
 
-  if (usdcBalance < MIN_USDC_BALANCE) {
+  if (tokenBalance < MIN_TOKEN_BALANCE) {
     if (!lazyEvmChain().hasFaucet) {
       console.log(
-        `\n   Insufficient USDC (need >= ${formatUnits(MIN_USDC_BALANCE, USDC_DECIMALS)} USDC)`,
+        `\n   Insufficient token balance (need >= ${formatUnits(MIN_TOKEN_BALANCE, TOKEN_DECIMALS)})`,
       );
       console.log('   No faucet available for this chain. Ensure wallet is pre-funded.');
       console.log(`   Fund manually: ${address}`);
@@ -349,18 +375,18 @@ export async function ensureFunded(
     }
 
     console.log(
-      `\n   Insufficient USDC (need >= ${formatUnits(MIN_USDC_BALANCE, USDC_DECIMALS)} USDC)`,
+      `\n   Insufficient token balance (need >= ${formatUnits(MIN_TOKEN_BALANCE, TOKEN_DECIMALS)})`,
     );
-    const faucetSuccess = await requestDripUsdc(getToken);
+    const faucetSuccess = await requestDrip(getToken);
     if (faucetSuccess) {
-      const gotBalance = await waitForBalance(address, MIN_USDC_BALANCE);
+      const gotBalance = await waitForBalance(address, MIN_TOKEN_BALANCE);
       if (!gotBalance) {
         console.log('\n   Timed out waiting for faucet funds.');
         console.log(`   Wallet address: ${address}`);
         process.exit(1);
       }
-      usdcBalance = await getUsdcBalanceRaw(address);
-      console.log(`   Updated USDC balance: ${formatUnits(usdcBalance, USDC_DECIMALS)} USDC`);
+      tokenBalance = await getTokenBalanceRaw(address);
+      console.log(`   Updated token balance: ${formatUnits(tokenBalance, TOKEN_DECIMALS)}`);
     } else {
       console.log('\n   Could not get funds from faucet.');
       console.log(`   Fund manually: ${address}`);
@@ -368,7 +394,7 @@ export async function ensureFunded(
     }
   }
 
-  return usdcBalance;
+  return tokenBalance;
 }
 
 // ── @quicknode/x402 Client ───────────────────────────────
@@ -477,7 +503,7 @@ export function createTrackingFetch(
 export type ExampleSetup = {
   chainType: ChainType;
   walletAddress: string;
-  /** EVM USDC balance (0n for Solana — no EVM balance to track). */
+  /** EVM token balance (0n for Solana — no EVM balance to track). */
   startBalance: bigint;
   /** The @quicknode/x402 client instance. */
   client: QuicknodeX402Client;

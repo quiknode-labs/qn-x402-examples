@@ -1,6 +1,6 @@
 # Quicknode x402 Examples
 
-End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package for SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet USDC (Base Sepolia only), and makes paid requests.
+End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package for SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet, XLayer Testnet, XLayer Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet stablecoins (Base Sepolia only via `/drip`), and makes paid requests.
 
 ## Overview
 
@@ -17,6 +17,8 @@ flowchart TB
         EX -->|base-sepolia| EB[Authenticate with SIWE]
         EX -->|polygon-amoy| EB
         EX -->|polygon-mainnet| EB
+        EX -->|xlayer-testnet| EB
+        EX -->|xlayer-mainnet| EB
         EB --> EC[Receive JWT Token]
         EC --> ED{Check USDC Balance}
         ED -->|Insufficient + hasFaucet| EE[Request from /drip Faucet]
@@ -67,7 +69,7 @@ flowchart TB
    - **EVM:** SIWE (EIP-4361) via `@quicknode/x402`
    - **Solana:** SIWX with Ed25519 signature via `@quicknode/x402`
 
-4. **USDC Funding** -- Checks the wallet's USDC balance. If insufficient, requests testnet USDC from the `/drip` endpoint (backed by CDP faucet). **Base Sepolia only** -- Polygon and Solana wallets must be pre-funded.
+4. **Token Funding** -- Checks the wallet's payment token balance. If insufficient, requests testnet tokens from the `/drip` endpoint (backed by CDP faucet). **Base Sepolia only** -- Polygon, XLayer, and Solana wallets must be pre-funded. XLayer uses USDG (not USDC).
 
 5. **Paid Requests** -- Uses `@quicknode/x402` client.fetch with automatic SIWX auth, x402 payment, and JWT session management. When credits are exhausted, the 402 response triggers automatic x402 payment signing.
    - **EVM:** EIP-712 typed-data signature via `@quicknode/x402`
@@ -134,6 +136,13 @@ npm run start:ws        # WebSocket demo (Ethereum)
 X402_EVM_CHAIN=polygon-amoy npm start
 ```
 
+### XLayer Testnet
+
+```bash
+# Requires pre-funded USDG (no /drip faucet for XLayer)
+X402_EVM_CHAIN=xlayer-testnet npm start
+```
+
 ### Solana
 
 ```bash
@@ -155,7 +164,7 @@ Each script accepts a network override via environment variable:
 
 | Script | Env Variable | Default |
 |--------|-------------|---------|
-| All (EVM) | `X402_EVM_CHAIN` | `base-sepolia` (options: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`) |
+| All (EVM) | `X402_EVM_CHAIN` | `base-sepolia` (options: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet`) |
 | All (Solana) | `X402_SOLANA_CHAIN` | `solana-devnet` (options: `solana-devnet`, `solana-mainnet`) |
 | `jsonrpc.ts` | `JSONRPC_NETWORK` | `base-sepolia` |
 | `rest.ts` | `REST_NETWORK` | `aptos-mainnet` |
@@ -185,10 +194,10 @@ Defined in `lib/x402-helpers.ts`:
 
 | Setting | Value | Description |
 |---------|-------|-------------|
-| `MIN_USDC_BALANCE` | `$0.005` | Minimum EVM balance before requesting faucet |
+| `MIN_TOKEN_BALANCE` | `$0.005` | Minimum EVM balance before requesting faucet |
 | `EVM_CHAIN_ID` | Resolved from `X402_EVM_CHAIN` | Numeric chain ID for SIWE (e.g., `84532`, `80002`, `137`) |
 | `EVM_CAIP2` | Resolved from `X402_EVM_CHAIN` | CAIP-2 identifier (e.g., `eip155:84532`, `eip155:80002`) |
-| `EVM_USDC_ADDRESS` | Resolved from `X402_EVM_CHAIN` | USDC contract address for the selected chain |
+| `EVM_TOKEN_ADDRESS` | Resolved from `X402_EVM_CHAIN` | Payment token contract address for the selected chain (USDC or USDG) |
 | `SOLANA_CAIP2` | Resolved from `X402_SOLANA_CHAIN` | CAIP-2 identifier for the selected Solana chain |
 
 ## Project Structure
@@ -221,7 +230,7 @@ The scripts automatically manage the `.env` file:
 | `PRIVATE_KEY` | Auto-generated EVM wallet private key (hex) |
 | `SOLANA_PRIVATE_KEY` | Auto-generated Solana keypair (Base58-encoded 64-byte secret key) |
 | `X402_BASE_URL` | Override the x402 worker URL (default: `https://x402.quicknode.com`) |
-| `X402_EVM_CHAIN` | EVM auth/payment chain: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet` (default: `base-sepolia`) |
+| `X402_EVM_CHAIN` | EVM auth/payment chain: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet` (default: `base-sepolia`) |
 | `X402_SOLANA_CHAIN` | Solana auth/payment chain: `solana-devnet`, `solana-mainnet` (default: `solana-devnet`) |
 | `X402_GRPC_BASE_URL` | Override the gRPC-Web endpoint (default: `{X402_BASE_URL}/flow-mainnet`) |
 | `JSONRPC_NETWORK` | Override JSON-RPC network (default: `base-sepolia`) |
@@ -343,7 +352,7 @@ When you make an RPC call and credits are exhausted:
 1. **Request** -- Your request includes JWT Bearer token
 2. **402 Response** -- Worker returns `402 Payment Required` with `PAYMENT-REQUIRED` header
 3. **Payment** -- `@quicknode/x402` automatically signs a payment authorization
-   - **EVM:** EIP-712 USDC payment on the configured chain (Base Sepolia, Polygon Amoy, or Polygon Mainnet)
+   - **EVM:** EIP-712 stablecoin payment on the configured chain (USDC on Base/Polygon, USDG on XLayer)
    - **Solana:** Ed25519 USDC payment on Solana Devnet
 4. **Settlement** -- The x402 facilitator settles the payment on-chain
 5. **Credits** -- Your account receives RPC credits (100 per payment on testnet)
