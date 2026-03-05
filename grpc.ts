@@ -6,9 +6,9 @@ import { AccessAPI, BlockStatus } from './gen/flow/access/access_pb.js';
 import {
   createPaymentTracker,
   getCredits,
-  getUsdcBalanceRaw,
+  getTokenBalanceRaw,
   setupExample,
-  USDC_DECIMALS,
+  TOKEN_DECIMALS,
   X402_BASE_URL,
 } from './lib/x402-helpers.js';
 
@@ -242,7 +242,7 @@ async function main() {
   let currentBalance = startBalance;
   if (chainType === 'evm') {
     try {
-      currentBalance = await getUsdcBalanceRaw(walletAddress);
+      currentBalance = await getTokenBalanceRaw(walletAddress);
     } catch (_error) {
       console.log('   (Could not fetch final balance)');
     }
@@ -272,9 +272,9 @@ async function main() {
   console.log(`   Initial credits:           ${initialCredits}`);
   console.log(`   Final credits:             ${finalCredits.credits}`);
   if (chainType === 'evm') {
-    console.log(`   Starting USDC:             $${formatUnits(startBalance, USDC_DECIMALS)}`);
-    console.log(`   Final USDC:                $${formatUnits(currentBalance, USDC_DECIMALS)}`);
-    console.log(`   USDC spent:                $${formatUnits(totalSpent, USDC_DECIMALS)}`);
+    console.log(`   Starting balance:             $${formatUnits(startBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Final balance:                $${formatUnits(currentBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Tokens spent:                $${formatUnits(totalSpent, TOKEN_DECIMALS)}`);
   }
   if (streamError) {
     console.log(`   Stream termination:        ${streamError}`);
