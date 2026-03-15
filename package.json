@@ -1,7 +1,7 @@
 {
   "name": "qn-x402-example",
   "version": "1.0.0",
-  "description": "End-to-end example demonstrating @quicknode/x402 with SIWX auth, x402 payment, and multi-protocol support",
+  "description": "End-to-end examples demonstrating @quicknode/x402 with two payment models: pay-per-request and credit drawdown (SIWX auth)",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",

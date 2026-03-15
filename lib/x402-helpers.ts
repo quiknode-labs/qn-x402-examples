@@ -202,8 +202,9 @@ export function getOrCreateSolanaPrivateKey(): string {
 
 // ── Chain Detection ───────────────────────────────────────
 export function detectChainType(): ChainType {
-  // Explicit X402_EVM_CHAIN takes priority over .env heuristic
+  // Explicit chain env vars take priority over .env heuristic
   if (process.env.X402_EVM_CHAIN) return 'evm';
+  if (process.env.X402_SOLANA_CHAIN) return 'solana';
   if (existsSync(ENV_FILE)) {
     const envContent = readFileSync(ENV_FILE, 'utf8');
     if (envContent.match(/^SOLANA_PRIVATE_KEY=(.+)/m)) return 'solana';
@@ -456,8 +457,22 @@ export async function createClientForChain(paymentModel?: PaymentModel): Promise
     console.log(`   Authenticated as ${client.getAccountId()}`);
   }
 
-  // Per-request users still need token balance (to pay per request), but skip credit checks
-  const startBalance = await ensureFunded(account.address, () => client.getToken());
+  // Per-request users still need token balance (to pay per request), but skip credit checks.
+  // Faucet requires auth, so per-request can only check balance and warn.
+  let startBalance: bigint;
+  if (isPerRequest) {
+    startBalance = await getTokenBalanceRaw(account.address);
+    console.log(`   Token balance: ${formatUnits(startBalance, TOKEN_DECIMALS)}`);
+    if (startBalance < MIN_TOKEN_BALANCE) {
+      console.log(
+        `\n   WARNING: Low token balance for pay-per-request (need >= ${formatUnits(MIN_TOKEN_BALANCE, TOKEN_DECIMALS)}).`,
+      );
+      console.log(`   Fund wallet: ${account.address}`);
+      console.log(`   Chain: ${lazyEvmChain().caip2}\n`);
+    }
+  } else {
+    startBalance = await ensureFunded(account.address, () => client.getToken());
+  }
 
   return { client, chainType, walletAddress: account.address, startBalance, paymentModel: model };
 }

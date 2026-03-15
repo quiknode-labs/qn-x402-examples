@@ -8,19 +8,36 @@
  * 4. Example to run
  *
  * Falls back to env-var behavior in non-interactive environments (CI, piped stdin).
+ *
+ * Base URL: defaults to https://x402.quicknode.com
+ *   Override: --base-url <url>  OR  X402_BASE_URL=<url>
  */
 import { execSync } from 'node:child_process';
 import { select } from '@inquirer/prompts';
 import { type ChainType, EVM_CHAINS, SOLANA_CHAINS } from './lib/x402-helpers.js';
+
+const DEFAULT_BASE_URL = 'https://x402.quicknode.com';
 
 interface CliConfig {
   chainType: ChainType;
   chainSlug: string;
   paymentModel: 'credit-drawdown' | 'pay-per-request';
   example: string;
+  baseUrl: string;
+}
+
+/** Parse --base-url from argv, fall back to X402_BASE_URL env, then default. */
+function resolveBaseUrl(): string {
+  const idx = process.argv.indexOf('--base-url');
+  if (idx !== -1 && process.argv[idx + 1]) {
+    return process.argv[idx + 1];
+  }
+  return process.env.X402_BASE_URL || DEFAULT_BASE_URL;
 }
 
 async function resolveConfig(): Promise<CliConfig> {
+  const baseUrl = resolveBaseUrl();
+
   const chainType = await select<ChainType>({
     message: 'Chain type',
     choices: [
@@ -52,41 +69,46 @@ async function resolveConfig(): Promise<CliConfig> {
     ],
   });
 
+  // Per-request only works with JSON-RPC and REST (worker rejects gRPC/WebSocket)
+  const isPerRequest = paymentModel === 'pay-per-request';
+  const exampleChoices = isPerRequest
+    ? [
+        { name: 'JSON-RPC', value: 'jsonrpc' },
+        { name: 'REST', value: 'rest' },
+        { name: 'All (stmux split view)', value: 'all' },
+      ]
+    : [
+        { name: 'JSON-RPC', value: 'jsonrpc' },
+        { name: 'REST', value: 'rest' },
+        { name: 'gRPC', value: 'grpc' },
+        { name: 'WebSocket', value: 'websocket' },
+        { name: 'All (stmux split view)', value: 'all' },
+      ];
+
   const example = await select<string>({
     message: 'Example to run',
-    choices: [
-      { name: 'JSON-RPC', value: 'jsonrpc' },
-      { name: 'REST', value: 'rest' },
-      { name: 'gRPC', value: 'grpc' },
-      { name: 'WebSocket (requires credit drawdown)', value: 'websocket' },
-      { name: 'All (stmux split view)', value: 'all' },
-    ],
+    choices: exampleChoices,
   });
 
-  // WebSocket requires credit drawdown
-  if (example === 'websocket' && paymentModel === 'pay-per-request') {
-    console.log(
-      '\n  WebSocket requires credit drawdown (persistent connection). Switching to credit drawdown.\n',
-    );
-    return { chainType, chainSlug, paymentModel: 'credit-drawdown', example };
-  }
-
-  return { chainType, chainSlug, paymentModel, example };
+  return { chainType, chainSlug, paymentModel, example, baseUrl };
 }
 
 async function runCli() {
+  const baseUrl = resolveBaseUrl();
+
   // Non-interactive detection: fall back to bootstrap.ts
   if (process.env.CI || !process.stdin.isTTY) {
     console.log('Non-interactive environment detected. Falling back to legacy bootstrap.');
     execSync('npx tsx bootstrap.ts', {
       stdio: 'inherit',
       cwd: import.meta.dirname,
-      env: process.env,
+      env: { ...process.env, X402_BASE_URL: baseUrl },
     });
     return;
   }
 
-  console.log('\n  Quicknode x402 Examples — Interactive Setup\n');
+  console.log('\n  Quicknode x402 Examples — Interactive Setup');
+  console.log(`  Base URL: ${baseUrl}${baseUrl !== DEFAULT_BASE_URL ? ' (custom)' : ''}\n`);
 
   let config: CliConfig;
   try {
@@ -99,6 +121,7 @@ async function runCli() {
 
   // Set env vars for the selected config
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  env.X402_BASE_URL = config.baseUrl;
   env.X402_PAYMENT_MODEL = config.paymentModel;
 
   if (config.chainType === 'evm') {
@@ -107,7 +130,8 @@ async function runCli() {
     env.X402_SOLANA_CHAIN = config.chainSlug;
   }
 
-  console.log(`\n  Chain: ${config.chainSlug}`);
+  console.log(`\n  Base URL: ${config.baseUrl}`);
+  console.log(`  Chain: ${config.chainSlug}`);
   console.log(`  Model: ${config.paymentModel}`);
   console.log(`  Example: ${config.example}\n`);
 
@@ -132,4 +156,4 @@ runCli().catch((error) => {
   process.exit(1);
 });
 
-export { resolveConfig, runCli };
+export { resolveBaseUrl, resolveConfig, runCli };

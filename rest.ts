@@ -8,12 +8,13 @@
  *   GET /v1/accounts/{address}/resources   → Account resources
  *   GET /v1/transactions/by_version/{ver}  → Transaction by version
  *
- * Phase 1: Individual REST calls to different endpoints
- * Phase 2: Credit consumption loop using lightweight ledger-info GET
+ * Supports both payment models:
+ *   - Credit drawdown: authenticate, buy credits, consume until exhausted
+ *   - Pay-per-request: no auth, each request pays $0.001 automatically
  *
  * Usage:
- *   npm run example:rest
- *   REST_NETWORK=aptos-testnet npm run example:rest
+ *   npm run start:rest
+ *   REST_NETWORK=aptos-testnet npm run start:rest
  */
 import { formatUnits } from 'viem';
 import {
@@ -72,33 +73,39 @@ async function main() {
   console.log('='.repeat(60));
 
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
-  const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
-  const getToken = () => client.getToken();
+  const { chainType, walletAddress, startBalance, client, x402Fetch, paymentModel } =
+    await setupExample(tracker);
+  const isPerRequest = paymentModel === 'pay-per-request';
 
-  // ── Check initial credits ────────────────────────────────
-  console.log(`\n${'='.repeat(60)}`);
-  console.log('   Checking credits...');
-  let creditsInfo = await getCredits(getToken);
-  const initialCredits = creditsInfo.credits;
-  console.log(`   Account: ${creditsInfo.accountId}`);
-  console.log(`   Credits: ${initialCredits}`);
-  console.log('   (Checked at start/end only — /credits is rate-limited)');
-  console.log('='.repeat(60));
+  // ── Payment model–specific setup ──────────────────────────
+  let initialCredits = 0;
 
-  // Reset counters for the test run
+  // Reset counters
   tracker.paymentResponseCount = 0;
   tracker.successfulPaymentCount = 0;
   tracker.totalFetchCount = 0;
-  // Bootstrap mode: never pay (credits pre-purchased). Standalone: buy once.
-  tracker.maxPayments = BOOTSTRAPPED ? 0 : 1;
 
-  console.log(
-    `   Mode: ${BOOTSTRAPPED ? 'bootstrapped (no payments)' : 'standalone (1 payment max)'}`,
-  );
+  if (isPerRequest) {
+    // No maxPayments cap — Phase 1 endpoints are the full demo, Phase 2 is skipped
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('   Mode: pay-per-request ($0.001/request)');
+    console.log('='.repeat(60));
+  } else {
+    const getToken = () => client.getToken();
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('   Checking credits...');
+    const creditsInfo = await getCredits(getToken);
+    initialCredits = creditsInfo.credits;
+    console.log(`   Account: ${creditsInfo.accountId}`);
+    console.log(`   Credits: ${initialCredits}`);
+    console.log('='.repeat(60));
 
-  if (initialCredits <= 0 && BOOTSTRAPPED) {
-    console.log('   No credits — exiting (bootstrap should have purchased).\n');
-    return;
+    tracker.maxPayments = BOOTSTRAPPED ? 0 : 1;
+
+    if (initialCredits <= 0 && BOOTSTRAPPED) {
+      console.log('   No credits — exiting (bootstrap should have purchased).\n');
+      return;
+    }
   }
 
   // ── Phase 1: Individual REST Calls ─────────────────────
@@ -126,7 +133,6 @@ async function main() {
 
   // 2. Block by height (use a recent block)
   try {
-    // First get current height from ledger info
     const { data: ledgerData } = await restGet(x402Fetch, 'v1/');
     callsMade++;
     const currentHeight = Number((ledgerData as { block_height: string }).block_height);
@@ -192,60 +198,63 @@ async function main() {
     );
   }
 
-  // ── Phase 2: Credit Consumption Loop ───────────────────
-
-  console.log(`\n${'='.repeat(60)}`);
-  console.log('-- Phase 2: Credit Consumption Loop (GET /v1/ ledger info) --');
-
-  creditsInfo = await getCredits(getToken);
-  const creditsBeforeLoop = creditsInfo.credits;
-  console.log(`   Credits before loop: ${creditsBeforeLoop}`);
-
-  if (creditsBeforeLoop <= 0 && BOOTSTRAPPED) {
-    console.log('   No credits remaining — demo complete.\n');
-    // Skip Phase 2 entirely; bootstrap mode won't pay for more.
-  } else if (creditsBeforeLoop <= 0 && tracker.successfulPaymentCount === 0) {
-    console.log('   No credits — first request will trigger x402 payment\n');
-  } else {
-    console.log(`   Running until credits exhausted or 500 requests...\n`);
-  }
-
+  // ── Phase 2: Credit Consumption Loop (credit drawdown only) ──
   let loopRequests = 0;
 
-  while (true) {
-    try {
-      const { data } = await restGet(x402Fetch, 'v1/');
-      loopRequests++;
+  if (isPerRequest) {
+    // Per-request: Phase 1 IS the demo (each endpoint call paid $0.001)
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(
+      `   Pay-per-request demo complete (${tracker.successfulPaymentCount} payments across ${callsMade} endpoints).`,
+    );
+  } else {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('-- Phase 2: Credit Consumption Loop (GET /v1/ ledger info) --');
+    const loopCredits = await getCredits(() => client.getToken());
+    const creditsBeforeLoop = loopCredits.credits;
+    console.log(`   Credits before loop: ${creditsBeforeLoop}`);
 
-      const ledger = data as { block_height: string; ledger_version: string };
-
-      const timestamp = new Date().toISOString().slice(11, 23);
-      console.log(
-        `   ${timestamp} Request #${loopRequests}: height=${ledger.block_height} ver=${ledger.ledger_version}`,
-      );
-
-      // Safety limit
-      if (loopRequests >= 500) {
-        console.log('\n   Reached 500 request limit, stopping.');
-        break;
+    if (creditsBeforeLoop <= 0 && BOOTSTRAPPED) {
+      console.log('   No credits remaining — demo complete.\n');
+    } else {
+      if (creditsBeforeLoop <= 0 && tracker.successfulPaymentCount === 0) {
+        console.log('   No credits — first request will trigger x402 payment\n');
+      } else {
+        console.log(`   Running until credits exhausted or 500 requests...\n`);
       }
 
-      // Small delay to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    } catch (error: any) {
-      // 402 after maxPayments reached — credits exhausted, clean exit
-      if (error.message?.startsWith('HTTP 402')) {
-        console.log('\n   All credits consumed. Demo complete!');
-        break;
+      while (true) {
+        try {
+          const { data } = await restGet(x402Fetch, 'v1/');
+          loopRequests++;
+
+          const ledger = data as { block_height: string; ledger_version: string };
+
+          const timestamp = new Date().toISOString().slice(11, 23);
+          console.log(
+            `   ${timestamp} Request #${loopRequests}: height=${ledger.block_height} ver=${ledger.ledger_version}`,
+          );
+
+          if (loopRequests >= 500) {
+            console.log('\n   Reached 500 request limit, stopping.');
+            break;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error: any) {
+          if (error.message?.startsWith('HTTP 402')) {
+            console.log('\n   All credits consumed. Demo complete!');
+            break;
+          }
+          if (error.message?.includes('401') || error.message?.includes('Token expired')) {
+            console.log('   Token expired, re-authenticating...');
+            await client.authenticate();
+            continue;
+          }
+          console.error(`   Request #${loopRequests + 1} failed:`, error.message);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
       }
-      // Handle 401 by re-authenticating
-      if (error.message?.includes('401') || error.message?.includes('Token expired')) {
-        console.log('   Token expired, re-authenticating...');
-        await client.authenticate();
-        continue;
-      }
-      console.error(`   Request #${loopRequests + 1} failed:`, error.message);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
@@ -259,13 +268,6 @@ async function main() {
     }
   }
 
-  let finalCredits = { credits: 0 };
-  try {
-    finalCredits = await getCredits(getToken, { forceRefresh: true });
-  } catch {
-    console.log('   (Could not fetch final credits)');
-  }
-  const totalSpent = startBalance - currentBalance;
   const totalRequests = callsMade + loopRequests;
   const durationMs = Date.now() - startTime;
 
@@ -274,18 +276,28 @@ async function main() {
   console.log('='.repeat(60));
   console.log(`   Network:                   ${REST_NETWORK}`);
   console.log(`   Protocol:                  REST (HTTP GET)`);
+  console.log(`   Payment model:             ${paymentModel}`);
   console.log(`   Auth chain:                ${chainType}`);
   console.log(`   Total REST calls:          ${totalRequests}`);
   console.log(`     Phase 1 (endpoints):     ${callsMade}`);
   console.log(`     Phase 2 (loop):          ${loopRequests}`);
   console.log(`   Total fetch calls:         ${tracker.totalFetchCount}`);
   console.log(`   x402 payments:             ${tracker.successfulPaymentCount}`);
-  console.log(`   Initial credits:           ${initialCredits}`);
-  console.log(`   Final credits:             ${finalCredits.credits}`);
+  if (!isPerRequest) {
+    let finalCredits = { credits: 0 };
+    try {
+      finalCredits = await getCredits(() => client.getToken(), { forceRefresh: true });
+    } catch {
+      /* token may have expired */
+    }
+    console.log(`   Initial credits:           ${initialCredits}`);
+    console.log(`   Final credits:             ${finalCredits.credits}`);
+  }
   if (chainType === 'evm') {
-    console.log(`   Starting balance:             $${formatUnits(startBalance, TOKEN_DECIMALS)}`);
-    console.log(`   Final balance:                $${formatUnits(currentBalance, TOKEN_DECIMALS)}`);
-    console.log(`   Tokens spent:                $${formatUnits(totalSpent, TOKEN_DECIMALS)}`);
+    const totalSpent = startBalance - currentBalance;
+    console.log(`   Starting balance:          $${formatUnits(startBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Final balance:             $${formatUnits(currentBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Tokens spent:              $${formatUnits(totalSpent, TOKEN_DECIMALS)}`);
   }
   console.log(`   Duration:                  ${(durationMs / 1000).toFixed(2)}s`);
   if (totalRequests > 0) {
