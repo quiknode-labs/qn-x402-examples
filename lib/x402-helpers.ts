@@ -3,10 +3,9 @@ import { createQuicknodeX402Client, type QuicknodeX402Client } from '@quicknode/
 import bs58 from 'bs58';
 import { config } from 'dotenv';
 import nacl from 'tweetnacl';
-import { formatUnits, type Hex } from 'viem';
+import { defineChain, formatUnits, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia, polygon, polygonAmoy, xLayer } from 'viem/chains';
-import { defineChain } from 'viem';
 
 // Load environment variables
 config();
@@ -222,9 +221,7 @@ let _credits429BackoffUntilMs = 0;
 let _creditsInflight: Promise<{ accountId: string; credits: number }> | null = null;
 const CREDITS_429_BACKOFF_MS = 10_000;
 
-async function _fetchCreditsRaw(
-  token: string,
-): Promise<{ accountId: string; credits: number }> {
+async function _fetchCreditsRaw(token: string): Promise<{ accountId: string; credits: number }> {
   const response = await fetch(X402_CREDITS_URL, {
     method: 'GET',
     headers: { Authorization: `Bearer ${token}` },
@@ -399,14 +396,27 @@ export async function ensureFunded(
 
 // ── @quicknode/x402 Client ───────────────────────────────
 
-/** Create a @quicknode/x402 client configured for the detected chain type. */
-export async function createClientForChain(): Promise<{
+export type PaymentModel = 'credit-drawdown' | 'pay-per-request';
+
+function getPaymentModel(): PaymentModel {
+  const model = process.env.X402_PAYMENT_MODEL;
+  if (model === 'pay-per-request') return 'pay-per-request';
+  return 'credit-drawdown';
+}
+
+/** Create a @quicknode/x402 client configured for the detected chain type and payment model. */
+export async function createClientForChain(paymentModel?: PaymentModel): Promise<{
   client: QuicknodeX402Client;
   chainType: ChainType;
   walletAddress: string;
   startBalance: bigint;
+  paymentModel: PaymentModel;
 }> {
   const chainType = detectChainType();
+  const model = paymentModel ?? getPaymentModel();
+  const isPerRequest = model === 'pay-per-request';
+
+  console.log(`   Payment model: ${model}`);
 
   if (chainType === 'solana') {
     const secretKeyBase58 = getOrCreateSolanaPrivateKey();
@@ -419,11 +429,14 @@ export async function createClientForChain(): Promise<{
       baseUrl: X402_BASE_URL,
       network: lazySolanaChain().caip2,
       svmPrivateKey: secretKeyBase58,
-      preAuth: true,
+      paymentModel: model,
+      preAuth: !isPerRequest,
     });
 
-    console.log(`   Authenticated as ${client.getAccountId()}`);
-    return { client, chainType, walletAddress: address, startBalance: 0n };
+    if (!isPerRequest) {
+      console.log(`   Authenticated as ${client.getAccountId()}`);
+    }
+    return { client, chainType, walletAddress: address, startBalance: 0n, paymentModel: model };
   }
 
   // EVM path
@@ -435,13 +448,18 @@ export async function createClientForChain(): Promise<{
     baseUrl: X402_BASE_URL,
     network: lazyEvmChain().caip2,
     evmPrivateKey: privateKey,
-    preAuth: true,
+    paymentModel: model,
+    preAuth: !isPerRequest,
   });
 
-  console.log(`   Authenticated as ${client.getAccountId()}`);
+  if (!isPerRequest) {
+    console.log(`   Authenticated as ${client.getAccountId()}`);
+  }
+
+  // Per-request users still need token balance (to pay per request), but skip credit checks
   const startBalance = await ensureFunded(account.address, () => client.getToken());
 
-  return { client, chainType, walletAddress: account.address, startBalance };
+  return { client, chainType, walletAddress: account.address, startBalance, paymentModel: model };
 }
 
 // ── Tracking Fetch ───────────────────────────────────────
@@ -509,10 +527,13 @@ export type ExampleSetup = {
   client: QuicknodeX402Client;
   /** Tracking fetch that wraps client.fetch with payment counting + maxPayments cap. */
   x402Fetch: typeof globalThis.fetch;
+  /** Active payment model. */
+  paymentModel: PaymentModel;
 };
 
 export async function setupExample(tracker: PaymentTracker): Promise<ExampleSetup> {
-  const { client, chainType, walletAddress, startBalance } = await createClientForChain();
+  const { client, chainType, walletAddress, startBalance, paymentModel } =
+    await createClientForChain();
   const x402Fetch = createTrackingFetch(client, tracker);
-  return { chainType, walletAddress, startBalance, client, x402Fetch };
+  return { chainType, walletAddress, startBalance, client, x402Fetch, paymentModel };
 }

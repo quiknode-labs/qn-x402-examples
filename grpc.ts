@@ -174,9 +174,7 @@ async function main() {
 
         if (block) {
           const local = new Date().toISOString().slice(11, 23);
-          console.log(
-            `   ${local} Block #${blocksReceived}: height=${block.height} time=${ts}`,
-          );
+          console.log(`   ${local} Block #${blocksReceived}: height=${block.height} time=${ts}`);
         }
 
         // Safety limit

@@ -1,6 +1,6 @@
 # Quicknode x402 Examples
 
-End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package for SIWX authentication across all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket. Supports **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet, XLayer Testnet, XLayer Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX, funds with testnet stablecoins (Base Sepolia only via `/drip`), and makes paid requests.
+End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package. Supports two payment models: **per-request** ($0.001/request, no auth) and **credit drawdown** (SIWX auth + bulk credits). Covers all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket across **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet, XLayer Testnet, XLayer Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX (credit drawdown), funds with testnet stablecoins (Base Sepolia only via `/drip`), and makes paid requests.
 
 ## Overview
 
@@ -347,7 +347,20 @@ const response = await fetch(`${X402_BASE_URL}/credits`, {
 
 ## x402 Payment Flow
 
-When you make an RPC call and credits are exhausted:
+Two payment models are available:
+
+### Per-Request ($0.001/request, No Auth)
+
+1. **Request** -- Send `PAYMENT-SIGNATURE` header with each request (no JWT needed)
+2. **Verify** -- Worker verifies the payment signature via the facilitator
+3. **Proxy** -- Request is forwarded to the upstream RPC endpoint
+4. **Error check** -- If upstream returns an error, it's passed through **without charge**
+5. **Settle** -- On success only, the payment is settled on-chain
+6. **Response** -- Includes `PAYMENT-RESPONSE` header confirming payment
+
+Use `paymentModel: 'pay-per-request'` in the client config. Ideal for AI agents and quick prototyping.
+
+### Credit Drawdown (Bulk Credits with Auth)
 
 1. **Request** -- Your request includes JWT Bearer token
 2. **402 Response** -- Worker returns `402 Payment Required` with `PAYMENT-REQUIRED` header
@@ -355,11 +368,13 @@ When you make an RPC call and credits are exhausted:
    - **EVM:** EIP-712 stablecoin payment on the configured chain (USDC on Base/Polygon, USDG on XLayer)
    - **Solana:** Ed25519 USDC payment on Solana Devnet
 4. **Settlement** -- The x402 facilitator settles the payment on-chain
-5. **Credits** -- Your account receives RPC credits (100 per payment on testnet)
+5. **Credits** -- Your account receives RPC credits (1,000 per payment on testnet)
 6. **Retry** -- The original request completes successfully
 7. **Response** -- Includes `PAYMENT-RESPONSE` header confirming payment
 
-All of this happens automatically -- you just make fetch calls with the x402-wrapped fetch!
+Use `paymentModel: 'credit-drawdown'` (default) or omit `paymentModel`. Ideal for high-volume usage.
+
+Both flows are handled automatically by the `@quicknode/x402` client — you just make fetch calls!
 
 ## Troubleshooting
 

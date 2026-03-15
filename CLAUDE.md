@@ -1,6 +1,6 @@
 # qn-x402-examples
 
-Public example scripts demonstrating Quicknode's x402 pay-per-request RPC proxy using the `@quicknode/x402` client package.
+Public example scripts demonstrating Quicknode's x402 RPC proxy using the `@quicknode/x402` client package. Two payment models: per-request ($0.001/req, no auth) and credit drawdown (SIWX auth + bulk credits).
 
 ## Run
 
