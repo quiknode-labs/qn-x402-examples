@@ -5,9 +5,12 @@
  * receives block header events with per-message credit metering,
  * and handles credit exhaustion gracefully.
  *
+ * NOTE: WebSocket requires credit drawdown (persistent authenticated connection).
+ * Pay-per-request is NOT supported — the example exits with guidance if selected.
+ *
  * Usage:
- *   npm run example:ws
- *   WS_NETWORK=base-sepolia npm run example:ws
+ *   npm run start:ws
+ *   WS_NETWORK=base-sepolia npm run start:ws
  */
 import { formatUnits } from 'viem';
 import {
@@ -42,6 +45,17 @@ async function main() {
   console.log('\n  x402 Example - WebSocket Subscriptions\n');
   console.log('='.repeat(60));
 
+  // ── Per-request guard (before setup to avoid unnecessary wallet/balance work) ──
+  if (process.env.X402_PAYMENT_MODEL === 'pay-per-request') {
+    console.log(
+      '\n   WebSocket requires credit drawdown (worker rejects per-request for WebSocket).',
+    );
+    console.log(
+      '   Use JSON-RPC or REST examples for pay-per-request, or switch to credit drawdown.\n',
+    );
+    process.exit(0);
+  }
+
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
   const { chainType, walletAddress, startBalance, client, x402Fetch } = await setupExample(tracker);
   const getToken = () => client.getToken();
@@ -53,12 +67,10 @@ async function main() {
   const initialCredits = creditsInfo.credits;
   console.log(`   Account: ${creditsInfo.accountId}`);
   console.log(`   Credits: ${initialCredits}`);
-  console.log('   (Checked at start/end only — /credits is rate-limited)');
 
   console.log(
     `   Mode: ${BOOTSTRAPPED ? 'bootstrapped (no payments)' : 'standalone (1 payment max)'}`,
   );
-  // Bootstrap mode: never pay. Standalone: allow 1 proactive payment.
   tracker.maxPayments = BOOTSTRAPPED ? 0 : 1;
 
   if (initialCredits <= 0 && BOOTSTRAPPED) {
@@ -83,8 +95,8 @@ async function main() {
   tracker.successfulPaymentCount = 0;
   tracker.totalFetchCount = 0;
 
-  // ── Phase 1: WebSocket Connection & Subscription ───────
-  console.log(`\n-- Phase 1: WebSocket Connection (${WS_NETWORK}) --\n`);
+  // ── WebSocket Connection & Subscription ────────────────
+  console.log(`\n-- WebSocket Connection (${WS_NETWORK}) --\n`);
 
   const creditsBeforeWs = creditsInfo.credits;
   console.log(`   Credits before connection: ${creditsBeforeWs}`);
@@ -218,7 +230,6 @@ async function main() {
     // Token may have expired
   }
 
-  const totalSpent = startBalance - currentBalance;
   const durationMs = Date.now() - startTime;
 
   console.log(`\n${'='.repeat(60)}`);
@@ -226,6 +237,7 @@ async function main() {
   console.log('='.repeat(60));
   console.log(`   Network:                   ${WS_NETWORK}`);
   console.log(`   Protocol:                  WebSocket`);
+  console.log(`   Payment model:             credit-drawdown`);
   console.log(`   Auth chain:                ${chainType}`);
   console.log(`   Events received:           ${eventsReceived}`);
   console.log(`   Subscription ID:           ${subscriptionId || '(none)'}`);
@@ -237,9 +249,10 @@ async function main() {
   console.log(`   Initial credits:           ${initialCredits}`);
   console.log(`   Final credits:             ${finalCredits.credits}`);
   if (chainType === 'evm') {
-    console.log(`   Starting balance:             $${formatUnits(startBalance, TOKEN_DECIMALS)}`);
-    console.log(`   Final balance:                $${formatUnits(currentBalance, TOKEN_DECIMALS)}`);
-    console.log(`   Tokens spent:                $${formatUnits(totalSpent, TOKEN_DECIMALS)}`);
+    const totalSpent = startBalance - currentBalance;
+    console.log(`   Starting balance:          $${formatUnits(startBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Final balance:             $${formatUnits(currentBalance, TOKEN_DECIMALS)}`);
+    console.log(`   Tokens spent:              $${formatUnits(totalSpent, TOKEN_DECIMALS)}`);
   }
   console.log(`   Duration:                  ${(durationMs / 1000).toFixed(2)}s`);
   if (eventsReceived > 0) {

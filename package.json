@@ -1,21 +1,25 @@
 {
   "name": "qn-x402-example",
   "version": "1.0.0",
-  "description": "End-to-end example demonstrating @quicknode/x402 with SIWX auth, x402 payment, and multi-protocol support",
+  "description": "End-to-end examples demonstrating @quicknode/x402 with two payment models: pay-per-request and credit drawdown (SIWX auth)",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "start": "tsx bootstrap.ts",
+    "start": "tsx cli.ts",
+    "start:legacy": "tsx bootstrap.ts",
     "start:jsonrpc": "tsx jsonrpc.ts",
     "start:grpc": "tsx grpc.ts",
     "start:rest": "tsx rest.ts",
     "start:ws": "tsx websocket.ts",
-    "generate": "buf generate"
+    "generate": "buf generate",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.11.0",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-web": "^2.1.1",
+    "@inquirer/prompts": "^8.3.0",
     "@quicknode/x402": "^0.1.1",
     "bs58": "^4.0.1",
     "dotenv": "^16.6.1",
@@ -23,6 +27,7 @@
     "viem": "^2.44.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.7",
     "@bufbuild/buf": "^1.65.0",
     "@bufbuild/protoc-gen-es": "^2.11.0",
     "@types/bs58": "^4.0.4",

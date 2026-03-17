@@ -1,11 +1,10 @@
 /**
- * Bootstrap — runs wallet setup, auth, and faucet funding once before
- * launching all 4 example scripts via stmux.
+ * Bootstrap — runs wallet setup and (for credit drawdown) auth + funding once
+ * before launching all example scripts via stmux.
  *
- * Uses @quicknode/x402 for SIWX authentication and x402 payment handling.
- * Each example script independently authenticates (preAuth: true), but
- * bootstrap ensures wallet creation, funding, and initial credit purchase
- * happen once to avoid race conditions.
+ * Supports both payment models:
+ *   - Credit drawdown: wallet + auth + faucet + credit purchase → stmux
+ *   - Pay-per-request: wallet + balance check → stmux (no auth, no credits)
  */
 import { execSync } from 'node:child_process';
 import {
@@ -78,9 +77,7 @@ async function purchaseCredits(
 async function main() {
   const chainType = detectChainType();
 
-  console.log(
-    `\n  x402 Bootstrap — ${chainType === 'solana' ? 'Solana' : 'EVM'} wallet, auth & funding\n`,
-  );
+  console.log(`\n  x402 Bootstrap — ${chainType === 'solana' ? 'Solana' : 'EVM'} wallet setup\n`);
   console.log('='.repeat(60));
   const chainDetail =
     chainType === 'evm'
@@ -89,35 +86,43 @@ async function main() {
   console.log(`   Chain:  ${chainType}${chainDetail}`);
   console.log(`   Target: ${X402_BASE_URL}`);
 
-  // Wallet creation, authentication, and funding handled by createClientForChain
-  const { client } = await createClientForChain();
-  const getToken = () => client.getToken();
+  // Wallet creation (+ auth for credit drawdown) handled by createClientForChain
+  const { client, paymentModel } = await createClientForChain();
+  const isPerRequest = paymentModel === 'pay-per-request';
+  console.log(`   Model:  ${paymentModel}`);
 
-  // Ensure credits > 0 (purchase if needed)
-  let creditsInfo = await getCredits(getToken);
-  console.log(`   Credits: ${creditsInfo.credits}`);
+  if (!isPerRequest) {
+    // Credit drawdown: ensure credits > 0 (purchase if needed)
+    const getToken = () => client.getToken();
+    let creditsInfo = await getCredits(getToken);
+    console.log(`   Credits: ${creditsInfo.credits}`);
 
-  if (creditsInfo.credits <= 0) {
-    console.log('   No credits — purchasing via x402 payment...');
-    const network = chainType === 'evm' ? getEvmChain().rpcSlug : getSolanaChain().rpcSlug;
-    creditsInfo = await purchaseCredits(client.fetch, getToken, network);
-    console.log(`   Credits after purchase: ${creditsInfo.credits}`);
+    if (creditsInfo.credits <= 0) {
+      console.log('   No credits — purchasing via x402 payment...');
+      const network = chainType === 'evm' ? getEvmChain().rpcSlug : getSolanaChain().rpcSlug;
+      creditsInfo = await purchaseCredits(client.fetch, getToken, network);
+      console.log(`   Credits after purchase: ${creditsInfo.credits}`);
+    }
+  } else {
+    console.log('   Pay-per-request: no credits needed (each request pays $0.001)');
   }
 
   console.log('='.repeat(60));
   console.log('   Bootstrap complete. Launching examples...\n');
 
-  // Launch stmux with all 4 examples (bootstrapped = no x402 payments)
-  execSync(
-    'npx --yes stmux -- ' +
-      '[ [ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ] ' +
-      ': [ -t WebSocket "npx tsx websocket.ts" .. -t gRPC "npx tsx grpc.ts" ] ]',
-    {
-      stdio: 'inherit',
-      cwd: import.meta.dirname,
-      env: { ...process.env, X402_BOOTSTRAPPED: '1' },
-    },
-  );
+  const env = { ...process.env, X402_BOOTSTRAPPED: '1', X402_PAYMENT_MODEL: paymentModel };
+
+  // Per-request: only JSON-RPC + REST (worker rejects gRPC/WebSocket per-request)
+  // Credit drawdown: all 4 protocols
+  const stmuxLayout = isPerRequest
+    ? '[ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ]'
+    : '[ [ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ] : [ -t WebSocket "npx tsx websocket.ts" .. -t gRPC "npx tsx grpc.ts" ] ]';
+
+  execSync(`npx --yes stmux -- ${stmuxLayout}`, {
+    stdio: 'inherit',
+    cwd: import.meta.dirname,
+    env,
+  });
 }
 
 main().catch((error) => {
