@@ -482,7 +482,7 @@ export async function createClientForChain(paymentModel?: PaymentModel): Promise
     console.log(`   Token balance: ${formatUnits(startBalance, TOKEN_DECIMALS)}`);
     if (startBalance < MIN_TOKEN_BALANCE) {
       console.log(
-        `\n   WARNING: Low token balance for pay-per-request (need >= ${formatUnits(MIN_TOKEN_BALANCE, TOKEN_DECIMALS)}).`,
+        `\n   WARNING: Low token balance for ${model} (need >= ${formatUnits(MIN_TOKEN_BALANCE, TOKEN_DECIMALS)}).`,
       );
       console.log(`   Fund wallet: ${account.address}`);
       console.log(`   Chain: ${lazyEvmChain().caip2}\n`);

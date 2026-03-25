@@ -73,7 +73,7 @@ async function main() {
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
   const { chainType, walletAddress, startBalance, client, x402Fetch, paymentModel } =
     await setupExample(tracker);
-  const isPerRequest = paymentModel === 'pay-per-request';
+  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
 
   // ── Payment model–specific setup ──────────────────────────
   let initialCredits = 0;
