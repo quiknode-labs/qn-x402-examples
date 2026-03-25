@@ -13,6 +13,7 @@ import {
   createPaymentTracker,
   EVM_CHAINS,
   type EvmChainSlug,
+  jsonRpc,
   setupExample,
   X402_BASE_URL,
 } from './lib/x402-helpers.js';
@@ -39,33 +40,6 @@ process.on('unhandledRejection', (err: any) => {
   console.error('Unhandled:', err?.message ?? err);
   process.exit(1);
 });
-
-// ── JSON-RPC helper ──────────────────────────────────────
-async function jsonRpc(
-  x402Fetch: typeof globalThis.fetch,
-  method: string,
-  params: unknown[] = [],
-): Promise<unknown> {
-  const response = await x402Fetch(JSONRPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method,
-      params,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`HTTP ${response.status}: ${text}`);
-  }
-
-  const data = (await response.json()) as { result?: unknown; error?: { message: string } };
-  if (data.error) throw new Error(data.error.message);
-  return data.result;
-}
 
 // ── Gateway balance polling ───────────────────────────────
 /** Poll Gateway balance until available > 0 or timeout (30s). */
@@ -195,7 +169,7 @@ async function main() {
 
   while (requestCount < DEMO_REQUEST_COUNT + 10) {
     try {
-      const result = await jsonRpc(x402Fetch, 'eth_blockNumber');
+      const result = await jsonRpc(x402Fetch, JSONRPC_URL, 'eth_blockNumber');
       requestCount++;
       const blockNumber = BigInt(result as string);
 

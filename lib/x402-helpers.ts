@@ -549,6 +549,35 @@ export function createTrackingFetch(
   };
 }
 
+// ── JSON-RPC helper (shared across example scripts) ──────
+
+export async function jsonRpc(
+  x402Fetch: typeof globalThis.fetch,
+  url: string,
+  method: string,
+  params: unknown[] = [],
+): Promise<unknown> {
+  const response = await x402Fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: Date.now(),
+      method,
+      params,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status}: ${text}`);
+  }
+
+  const data = (await response.json()) as { result?: unknown; error?: { message: string } };
+  if (data.error) throw new Error(data.error.message);
+  return data.result;
+}
+
 // ── Example Setup (shared across all example scripts) ─────
 export type ExampleSetup = {
   chainType: ChainType;

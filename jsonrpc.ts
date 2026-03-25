@@ -14,6 +14,7 @@ import {
   createPaymentTracker,
   getCredits,
   getTokenBalanceRaw,
+  jsonRpc,
   setupExample,
   TOKEN_DECIMALS,
   X402_BASE_URL,
@@ -31,34 +32,6 @@ const tracker = createPaymentTracker();
 // ── Always exit clean ────────────────────────────────────
 process.on('uncaughtException', () => process.exit(0));
 process.on('unhandledRejection', () => process.exit(0));
-
-// ── JSON-RPC helper ──────────────────────────────────────
-
-async function jsonRpc(
-  x402Fetch: typeof globalThis.fetch,
-  method: string,
-  params: unknown[] = [],
-): Promise<unknown> {
-  const response = await x402Fetch(JSONRPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method,
-      params,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`HTTP ${response.status}: ${text}`);
-  }
-
-  const data = (await response.json()) as { result?: unknown; error?: { message: string } };
-  if (data.error) throw new Error(data.error.message);
-  return data.result;
-}
 
 // ─────────────────────────────────────────────────────────
 // Main
@@ -125,7 +98,7 @@ async function main() {
 
   while (true) {
     try {
-      const result = await jsonRpc(x402Fetch, 'eth_blockNumber');
+      const result = await jsonRpc(x402Fetch, JSONRPC_URL, 'eth_blockNumber');
       requestCount++;
       const blockNumber = BigInt(result as string);
 
