@@ -63,11 +63,14 @@ async function main() {
   console.log('\n  x402 Example - gRPC-Web on Flow Mainnet\n');
   console.log('='.repeat(60));
 
-  // ── Per-request guard (before setup to avoid unnecessary wallet/balance work) ──
-  if (process.env.X402_PAYMENT_MODEL === 'pay-per-request') {
-    console.log('\n   gRPC requires credit drawdown (worker rejects per-request for gRPC).');
+  // ── Payment model guard (before setup to avoid unnecessary wallet/balance work) ──
+  const unsupportedModel = process.env.X402_PAYMENT_MODEL;
+  if (unsupportedModel === 'pay-per-request' || unsupportedModel === 'nanopayment') {
     console.log(
-      '   Use JSON-RPC or REST examples for pay-per-request, or switch to credit drawdown.\n',
+      `\n   gRPC requires credit drawdown (worker rejects ${unsupportedModel} for gRPC).`,
+    );
+    console.log(
+      `   Use JSON-RPC or REST examples for ${unsupportedModel}, or switch to credit drawdown.\n`,
     );
     process.exit(0);
   }
