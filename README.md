@@ -1,10 +1,10 @@
 # Quicknode x402 Examples
 
-End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package. Supports two payment models: **per-request** ($0.001/request, no auth) and **credit drawdown** (SIWX auth + bulk credits). Covers all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket across **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet, XLayer Testnet, XLayer Mainnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX (credit drawdown), funds with testnet stablecoins (Base Sepolia only via `/drip`), and makes paid requests.
+End-to-end demonstrations of the x402 payment protocol using the `@quicknode/x402` package. Supports three payment models: **per-request** ($0.001/request, no auth), **credit drawdown** (SIWX auth + bulk credits), and **nanopayment** ($0.0001/request via Circle Gateway). Covers all supported protocols: JSON-RPC, REST, gRPC-Web, and WebSocket across **EVM** (Base Sepolia, Polygon Amoy, Polygon Mainnet, XLayer Testnet, XLayer Mainnet, Arc Testnet) and **Solana** (Devnet) wallets. Automatically creates a wallet, authenticates via SIWX (credit drawdown), funds with testnet stablecoins (Base Sepolia only via `/drip`), and makes paid requests.
 
 ## Overview
 
-Four example scripts showcase the complete SIWX + x402 v2 flow across different protocols. The bootstrap process auto-detects your chain type from `.env` and runs the appropriate auth and funding path.
+Five example scripts showcase the complete SIWX + x402 v2 flow across different protocols. The bootstrap process auto-detects your chain type from `.env` and runs the appropriate auth and funding path. An interactive CLI (`npm start`) lets you select chain type, payment network, payment model (including nanopayment), and example to run.
 
 ```mermaid
 flowchart TB
@@ -19,6 +19,7 @@ flowchart TB
         EX -->|polygon-mainnet| EB
         EX -->|xlayer-testnet| EB
         EX -->|xlayer-mainnet| EB
+        EX -->|arc-testnet| EB
         EB --> EC[Receive JWT Token]
         EC --> ED{Check USDC Balance}
         ED -->|Insufficient + hasFaucet| EE[Request from /drip Faucet]
@@ -56,6 +57,7 @@ flowchart TB
 | `rest.ts` | REST | Aptos Mainnet | HTTP GET endpoints (ledger info, blocks, accounts, transactions) |
 | `grpc.ts` | gRPC-Web | Flow Mainnet | Unary calls (Ping, GetLatestBlock) + streaming (SubscribeBlocksFromLatest) |
 | `websocket.ts` | WebSocket | Base Mainnet | Real-time `newHeads` subscription with non-blocking credit polling |
+| `nanopayment.ts` | JSON-RPC | Base Sepolia | Circle Gateway nanopayment loop ($0.0001/request) |
 
 ## How It Works
 
@@ -123,10 +125,11 @@ npm install
 npm start
 
 # Or run individual examples
-npm run start:jsonrpc   # JSON-RPC demo
-npm run start:rest      # REST demo (Aptos)
-npm run start:grpc      # gRPC-Web demo (Flow)
-npm run start:ws        # WebSocket demo (Ethereum)
+npm run start:jsonrpc       # JSON-RPC demo
+npm run start:rest          # REST demo (Aptos)
+npm run start:grpc          # gRPC-Web demo (Flow)
+npm run start:ws            # WebSocket demo (Ethereum)
+npm run start:nanopayment   # Nanopayment demo (Circle Gateway)
 ```
 
 ### Polygon Amoy
@@ -141,6 +144,16 @@ X402_EVM_CHAIN=polygon-amoy npm start
 ```bash
 # Requires pre-funded USDG (no /drip faucet for XLayer)
 X402_EVM_CHAIN=xlayer-testnet npm start
+```
+
+### Arc Testnet
+
+```bash
+# Requires pre-funded USDC (no /drip faucet for Arc)
+X402_EVM_CHAIN=arc-testnet npm start
+
+# Or run nanopayment example specifically
+X402_EVM_CHAIN=arc-testnet npm run start:nanopayment
 ```
 
 ### Solana
@@ -164,7 +177,7 @@ Each script accepts a network override via environment variable:
 
 | Script | Env Variable | Default |
 |--------|-------------|---------|
-| All (EVM) | `X402_EVM_CHAIN` | `base-sepolia` (options: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet`) |
+| All (EVM) | `X402_EVM_CHAIN` | `base-sepolia` (options: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet`, `arc-testnet`) |
 | All (Solana) | `X402_SOLANA_CHAIN` | `solana-devnet` (options: `solana-devnet`, `solana-mainnet`) |
 | `jsonrpc.ts` | `JSONRPC_NETWORK` | `base-sepolia` |
 | `rest.ts` | `REST_NETWORK` | `aptos-mainnet` |
@@ -209,6 +222,7 @@ qn-x402-examples/
 ├── rest.ts                 # REST example (Aptos blockchain GET endpoints)
 ├── grpc.ts                 # gRPC-Web example (Flow: unary + streaming)
 ├── websocket.ts            # WebSocket example (Ethereum newHeads subscription)
+├── nanopayment.ts          # Nanopayment example (Circle Gateway, $0.0001/request)
 ├── lib/
 │   └── x402-helpers.ts     # Shared: wallet (EVM + Solana), auth, credits, faucet, x402 fetch
 ├── proto/
@@ -230,7 +244,8 @@ The scripts automatically manage the `.env` file:
 | `PRIVATE_KEY` | Auto-generated EVM wallet private key (hex) |
 | `SOLANA_PRIVATE_KEY` | Auto-generated Solana keypair (Base58-encoded 64-byte secret key) |
 | `X402_BASE_URL` | Override the x402 worker URL (default: `https://x402.quicknode.com`) |
-| `X402_EVM_CHAIN` | EVM auth/payment chain: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet` (default: `base-sepolia`) |
+| `X402_EVM_CHAIN` | EVM auth/payment chain: `base-sepolia`, `base-mainnet`, `polygon-amoy`, `polygon-mainnet`, `xlayer-testnet`, `xlayer-mainnet`, `arc-testnet` (default: `base-sepolia`) |
+| `X402_PAYMENT_MODEL` | Payment model: `pay-per-request`, `credit-drawdown`, or `nanopayment` (default: `credit-drawdown`) |
 | `X402_SOLANA_CHAIN` | Solana auth/payment chain: `solana-devnet`, `solana-mainnet` (default: `solana-devnet`) |
 | `X402_GRPC_BASE_URL` | Override the gRPC-Web endpoint (default: `{X402_BASE_URL}/flow-mainnet`) |
 | `JSONRPC_NETWORK` | Override JSON-RPC network (default: `base-sepolia`) |
@@ -374,7 +389,16 @@ Use `paymentModel: 'pay-per-request'` in the client config. Ideal for AI agents 
 
 Use `paymentModel: 'credit-drawdown'` (default) or omit `paymentModel`. Ideal for high-volume usage.
 
-Both flows are handled automatically by the `@quicknode/x402` client — you just make fetch calls!
+### Nanopayment ($0.0001/request, Circle Gateway)
+
+1. **Deposit** -- Before making requests, deposit USDC into the Circle Gateway Wallet contract (one-time on-chain tx)
+2. **Request** -- Send `PAYMENT-SIGNATURE` header with each request (no JWT needed)
+3. **Batch Settlement** -- Payments are batched and settled via Circle Gateway at $0.0001/request
+4. **Response** -- Includes `PAYMENT-RESPONSE` header confirming payment
+
+Use `paymentModel: 'nanopayment'` in the client config. EVM testnets only (Base Sepolia, Polygon Amoy, Arc Testnet).
+
+All flows are handled automatically by the `@quicknode/x402` client — you just make fetch calls!
 
 ## Troubleshooting
 

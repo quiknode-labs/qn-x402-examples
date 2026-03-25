@@ -11,6 +11,7 @@
     "start:grpc": "tsx grpc.ts",
     "start:rest": "tsx rest.ts",
     "start:ws": "tsx websocket.ts",
+    "start:nanopayment": "tsx nanopayment.ts",
     "generate": "buf generate",
     "lint": "biome check .",
     "lint:fix": "biome check --write ."

@@ -7,6 +7,13 @@ import { defineChain, formatUnits, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia, polygon, polygonAmoy, xLayer } from 'viem/chains';
 
+const arcTestnet = defineChain({
+  id: 5042002,
+  name: 'Arc Testnet',
+  nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc-testnet.arc.alchemy.com'] } },
+});
+
 // Load environment variables
 config();
 
@@ -73,6 +80,15 @@ export const EVM_CHAINS = {
     paymentToken: '0xF0863D7A29a55d0c4263c11bFac754312ff078DF',
     rpcSlug: 'xlayer-testnet',
     docsDemo: 'https://docs-demo.xlayer-testnet.quiknode.pro/',
+    hasFaucet: false,
+  },
+  'arc-testnet': {
+    caip2: 'eip155:5042002',
+    numericId: 5042002,
+    viemChain: arcTestnet,
+    paymentToken: '0x3600000000000000000000000000000000000000',
+    rpcSlug: 'arc-testnet',
+    docsDemo: 'https://docs-demo.arc-testnet.quiknode.pro/',
     hasFaucet: false,
   },
 } as const;
@@ -397,11 +413,12 @@ export async function ensureFunded(
 
 // ── @quicknode/x402 Client ───────────────────────────────
 
-export type PaymentModel = 'credit-drawdown' | 'pay-per-request';
+export type PaymentModel = 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
 
 function getPaymentModel(): PaymentModel {
   const model = process.env.X402_PAYMENT_MODEL;
   if (model === 'pay-per-request') return 'pay-per-request';
+  if (model === 'nanopayment') return 'nanopayment';
   return 'credit-drawdown';
 }
 
@@ -415,7 +432,7 @@ export async function createClientForChain(paymentModel?: PaymentModel): Promise
 }> {
   const chainType = detectChainType();
   const model = paymentModel ?? getPaymentModel();
-  const isPerRequest = model === 'pay-per-request';
+  const isPerRequest = model === 'pay-per-request' || model === 'nanopayment';
 
   console.log(`   Payment model: ${model}`);
 
