@@ -62,7 +62,10 @@ async function resolveConfig(): Promise<CliConfig> {
   const NANOPAYMENT_ONLY_CHAINS = new Set(['arc-testnet']);
   const NANOPAYMENT_ELIGIBLE_CHAINS = new Set(['base-sepolia', 'polygon-amoy', 'arc-testnet']);
 
-  type PaymentModelChoice = { name: string; value: 'credit-drawdown' | 'pay-per-request' | 'nanopayment' };
+  type PaymentModelChoice = {
+    name: string;
+    value: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
+  };
   let paymentModelChoices: PaymentModelChoice[];
 
   if (NANOPAYMENT_ONLY_CHAINS.has(chainSlug)) {

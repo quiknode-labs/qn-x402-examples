@@ -103,7 +103,9 @@ async function main() {
             const walletUsdc = Number(balances.wallet.balance) / 1e6;
             const depositNum = Math.min(0.5, walletUsdc);
             if (depositNum < MIN_DEPOSIT_USDC) {
-              console.log(`   Wallet balance too low to deposit (${walletUsdc.toFixed(6)} USDC, minimum ${MIN_DEPOSIT_USDC}).`);
+              console.log(
+                `   Wallet balance too low to deposit (${walletUsdc.toFixed(6)} USDC, minimum ${MIN_DEPOSIT_USDC}).`,
+              );
               console.log(`   Fund your wallet with more USDC first:`);
               console.log(`   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`);
             } else {
@@ -117,16 +119,24 @@ async function main() {
                 console.log('   Waiting for Gateway to index deposit...');
                 const funded = await waitForGatewayBalance(client.gatewayClient);
                 if (!funded) {
-                  console.log('   Gateway balance not yet visible — deposit may still be indexing.');
-                  console.log('   Proceeding anyway (first request may trigger settlement retry).\n');
+                  console.log(
+                    '   Gateway balance not yet visible — deposit may still be indexing.',
+                  );
+                  console.log(
+                    '   Proceeding anyway (first request may trigger settlement retry).\n',
+                  );
                 }
               } catch (depositErr: any) {
                 const msg = depositErr.message || '';
                 if (msg.includes('insufficient funds') || msg.includes('gas')) {
                   console.log('   Auto-deposit failed: wallet has no native token for gas.');
-                  console.log('   The deposit requires ETH/native token to pay for the approve + deposit transactions.');
+                  console.log(
+                    '   The deposit requires ETH/native token to pay for the approve + deposit transactions.',
+                  );
                   console.log(`   Fund your wallet with native token first:`);
-                  console.log(`   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`);
+                  console.log(
+                    `   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`,
+                  );
                 } else {
                   console.log(`   Auto-deposit failed: ${msg}`);
                 }
