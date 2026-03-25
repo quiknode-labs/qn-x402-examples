@@ -60,7 +60,9 @@ async function main() {
     // Per-request: each request pays $0.001, demo for N requests then stop
     tracker.maxPayments = PER_REQUEST_DEMO_LIMIT;
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`   Mode: pay-per-request ($0.001/request)`);
+    console.log(
+      `   Mode: ${paymentModel} ($${paymentModel === 'nanopayment' ? '0.0001' : '0.001'}/request)`,
+    );
     console.log(`   Demo: ${PER_REQUEST_DEMO_LIMIT} paid requests`);
     console.log('='.repeat(60));
   } else {
@@ -115,7 +117,7 @@ async function main() {
       if (error.message?.startsWith('HTTP 402')) {
         if (isPerRequest) {
           console.log(
-            `\n   Pay-per-request demo complete (${tracker.successfulPaymentCount} payments).`,
+            `\n   ${paymentModel === 'nanopayment' ? 'Nanopayment' : 'Pay-per-request'} demo complete (${tracker.successfulPaymentCount} payments).`,
           );
         } else {
           console.log('\n   All credits consumed. Demo complete!');
