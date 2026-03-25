@@ -124,39 +124,45 @@ async function main() {
 
         if (!gatewayReady) {
           console.log('\n   No USDC deposited in Gateway Wallet.');
+          const MIN_DEPOSIT_USDC = 0.001;
           if (balances.wallet.balance > 0n) {
-            // Deposit up to 0.50 USDC, capped by wallet balance
             const walletUsdc = Number(balances.wallet.balance) / 1e6;
             const depositNum = Math.min(0.5, walletUsdc);
-            const depositAmount = depositNum.toFixed(2);
-            console.log(`   Auto-depositing ${depositAmount} USDC into Gateway Wallet...`);
-            try {
-              const depositResult = await client.gatewayClient.deposit(depositAmount);
-              console.log(`   Deposit successful! tx: ${depositResult.depositTxHash}`);
+            if (depositNum < MIN_DEPOSIT_USDC) {
+              console.log(`   Wallet balance too low to deposit (${walletUsdc.toFixed(6)} USDC, minimum ${MIN_DEPOSIT_USDC}).`);
+              console.log(`   Fund your wallet with more USDC first:`);
+              console.log(`   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`);
+            } else {
+              const depositAmount = depositNum.toFixed(6);
+              console.log(`   Auto-depositing ${depositAmount} USDC into Gateway Wallet...`);
+              try {
+                const depositResult = await client.gatewayClient.deposit(depositAmount);
+                console.log(`   Deposit successful! tx: ${depositResult.depositTxHash}`);
 
-              // Poll until Gateway balance appears (deposit needs indexing time)
-              console.log('   Waiting for Gateway to index deposit...');
-              const funded = await waitForGatewayBalance(client.gatewayClient);
-              if (!funded) {
-                console.log('   Gateway balance not yet visible — deposit may still be indexing.');
-                console.log('   Proceeding anyway (first request may trigger settlement retry).\n');
+                // Poll until Gateway balance appears (deposit needs indexing time)
+                console.log('   Waiting for Gateway to index deposit...');
+                const funded = await waitForGatewayBalance(client.gatewayClient);
+                if (!funded) {
+                  console.log('   Gateway balance not yet visible — deposit may still be indexing.');
+                  console.log('   Proceeding anyway (first request may trigger settlement retry).\n');
+                }
+              } catch (depositErr: any) {
+                const msg = depositErr.message || '';
+                if (msg.includes('insufficient funds') || msg.includes('gas')) {
+                  console.log('   Auto-deposit failed: wallet has no native token for gas.');
+                  console.log('   The deposit requires ETH/native token to pay for the approve + deposit transactions.');
+                  console.log(`   Fund your wallet with native token first:`);
+                  console.log(`   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`);
+                } else {
+                  console.log(`   Auto-deposit failed: ${msg}`);
+                }
+                console.log('   To deposit manually:\n');
+                console.log(`     import { GatewayClient } from '@quicknode/x402';`);
+                console.log(
+                  `     const gw = new GatewayClient({ chain: '${gatewayChainName}', privateKey: '0x...' });`,
+                );
+                console.log(`     await gw.deposit('1.0'); // Deposit 1 USDC\n`);
               }
-            } catch (depositErr: any) {
-              const msg = depositErr.message || '';
-              if (msg.includes('insufficient funds') || msg.includes('gas')) {
-                console.log('   Auto-deposit failed: wallet has no native token for gas.');
-                console.log('   The deposit requires ETH/native token to pay for the approve + deposit transactions.');
-                console.log(`   Fund your wallet with native token first:`);
-                console.log(`   Wallet address: ${client.gatewayClient.address ?? '(see .env)'}\n`);
-              } else {
-                console.log(`   Auto-deposit failed: ${msg}`);
-              }
-              console.log('   To deposit manually:\n');
-              console.log(`     import { GatewayClient } from '@quicknode/x402';`);
-              console.log(
-                `     const gw = new GatewayClient({ chain: '${gatewayChainName}', privateKey: '0x...' });`,
-              );
-              console.log(`     await gw.deposit('1.0'); // Deposit 1 USDC\n`);
             }
           } else {
             console.log('   Wallet has no USDC either. Fund your wallet first:');
