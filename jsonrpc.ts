@@ -14,6 +14,7 @@ import {
   createPaymentTracker,
   getCredits,
   getTokenBalanceRaw,
+  jsonRpc,
   setupExample,
   TOKEN_DECIMALS,
   X402_BASE_URL,
@@ -32,34 +33,6 @@ const tracker = createPaymentTracker();
 process.on('uncaughtException', () => process.exit(0));
 process.on('unhandledRejection', () => process.exit(0));
 
-// ── JSON-RPC helper ──────────────────────────────────────
-
-async function jsonRpc(
-  x402Fetch: typeof globalThis.fetch,
-  method: string,
-  params: unknown[] = [],
-): Promise<unknown> {
-  const response = await x402Fetch(JSONRPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method,
-      params,
-    }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`HTTP ${response.status}: ${text}`);
-  }
-
-  const data = (await response.json()) as { result?: unknown; error?: { message: string } };
-  if (data.error) throw new Error(data.error.message);
-  return data.result;
-}
-
 // ─────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────
@@ -73,7 +46,7 @@ async function main() {
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
   const { chainType, walletAddress, startBalance, client, x402Fetch, paymentModel } =
     await setupExample(tracker);
-  const isPerRequest = paymentModel === 'pay-per-request';
+  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
 
   // ── Payment model–specific setup ──────────────────────────
   let initialCredits = 0;
@@ -87,7 +60,9 @@ async function main() {
     // Per-request: each request pays $0.001, demo for N requests then stop
     tracker.maxPayments = PER_REQUEST_DEMO_LIMIT;
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`   Mode: pay-per-request ($0.001/request)`);
+    console.log(
+      `   Mode: ${paymentModel} ($${paymentModel === 'nanopayment' ? '0.0001' : '0.001'}/request)`,
+    );
     console.log(`   Demo: ${PER_REQUEST_DEMO_LIMIT} paid requests`);
     console.log('='.repeat(60));
   } else {
@@ -125,7 +100,7 @@ async function main() {
 
   while (true) {
     try {
-      const result = await jsonRpc(x402Fetch, 'eth_blockNumber');
+      const result = await jsonRpc(x402Fetch, JSONRPC_URL, 'eth_blockNumber');
       requestCount++;
       const blockNumber = BigInt(result as string);
 
@@ -142,7 +117,7 @@ async function main() {
       if (error.message?.startsWith('HTTP 402')) {
         if (isPerRequest) {
           console.log(
-            `\n   Pay-per-request demo complete (${tracker.successfulPaymentCount} payments).`,
+            `\n   ${paymentModel === 'nanopayment' ? 'Nanopayment' : 'Pay-per-request'} demo complete (${tracker.successfulPaymentCount} payments).`,
           );
         } else {
           console.log('\n   All credits consumed. Demo complete!');

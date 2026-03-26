@@ -75,7 +75,7 @@ async function main() {
   // ── Setup (chain-aware: EVM or Solana) ───────────────────
   const { chainType, walletAddress, startBalance, client, x402Fetch, paymentModel } =
     await setupExample(tracker);
-  const isPerRequest = paymentModel === 'pay-per-request';
+  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
 
   // ── Payment model–specific setup ──────────────────────────
   let initialCredits = 0;
@@ -88,7 +88,9 @@ async function main() {
   if (isPerRequest) {
     // No maxPayments cap — Phase 1 endpoints are the full demo, Phase 2 is skipped
     console.log(`\n${'='.repeat(60)}`);
-    console.log('   Mode: pay-per-request ($0.001/request)');
+    console.log(
+      `   Mode: ${paymentModel} ($${paymentModel === 'nanopayment' ? '0.0001' : '0.001'}/request)`,
+    );
     console.log('='.repeat(60));
   } else {
     const getToken = () => client.getToken();
@@ -205,7 +207,7 @@ async function main() {
     // Per-request: Phase 1 IS the demo (each endpoint call paid $0.001)
     console.log(`\n${'='.repeat(60)}`);
     console.log(
-      `   Pay-per-request demo complete (${tracker.successfulPaymentCount} payments across ${callsMade} endpoints).`,
+      `   ${paymentModel === 'nanopayment' ? 'Nanopayment' : 'Pay-per-request'} demo complete (${tracker.successfulPaymentCount} payments across ${callsMade} endpoints).`,
     );
   } else {
     console.log(`\n${'='.repeat(60)}`);

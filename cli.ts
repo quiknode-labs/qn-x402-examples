@@ -21,7 +21,7 @@ const DEFAULT_BASE_URL = 'https://x402.quicknode.com';
 interface CliConfig {
   chainType: ChainType;
   chainSlug: string;
-  paymentModel: 'credit-drawdown' | 'pay-per-request';
+  paymentModel: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
   example: string;
   baseUrl: string;
 }
@@ -55,9 +55,28 @@ async function resolveConfig(): Promise<CliConfig> {
     })),
   });
 
-  const paymentModel = await select<'credit-drawdown' | 'pay-per-request'>({
-    message: 'Payment model',
-    choices: [
+  // Chain-aware payment model choices:
+  // - Arc Testnet: nanopayment only (no exact per-request or credit drawdown)
+  // - Solana: no nanopayment (not supported)
+  // - Other EVM: all options
+  const NANOPAYMENT_ONLY_CHAINS = new Set(['arc-testnet']);
+  const NANOPAYMENT_ELIGIBLE_CHAINS = new Set(['base-sepolia', 'polygon-amoy', 'arc-testnet']);
+
+  type PaymentModelChoice = {
+    name: string;
+    value: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
+  };
+  let paymentModelChoices: PaymentModelChoice[];
+
+  if (NANOPAYMENT_ONLY_CHAINS.has(chainSlug)) {
+    paymentModelChoices = [
+      {
+        name: 'Nanopayment ($0.0001/request, Circle Gateway)',
+        value: 'nanopayment',
+      },
+    ];
+  } else {
+    paymentModelChoices = [
       {
         name: 'Pay per request ($0.001/request, no auth)',
         value: 'pay-per-request',
@@ -66,24 +85,40 @@ async function resolveConfig(): Promise<CliConfig> {
         name: 'Credit drawdown (testnet: $1/1k credits, mainnet: $10/1M credits, SIWX auth)',
         value: 'credit-drawdown',
       },
-    ],
+      ...(chainType === 'evm' && NANOPAYMENT_ELIGIBLE_CHAINS.has(chainSlug)
+        ? [
+            {
+              name: 'Nanopayment ($0.0001/request, Circle Gateway, EVM testnets only)',
+              value: 'nanopayment' as const,
+            },
+          ]
+        : []),
+    ];
+  }
+
+  const paymentModel = await select<'credit-drawdown' | 'pay-per-request' | 'nanopayment'>({
+    message: 'Payment model',
+    choices: paymentModelChoices,
   });
 
-  // Per-request only works with JSON-RPC and REST (worker rejects gRPC/WebSocket)
-  const isPerRequest = paymentModel === 'pay-per-request';
-  const exampleChoices = isPerRequest
-    ? [
-        { name: 'JSON-RPC', value: 'jsonrpc' },
-        { name: 'REST', value: 'rest' },
-        { name: 'All (stmux split view)', value: 'all' },
-      ]
-    : [
-        { name: 'JSON-RPC', value: 'jsonrpc' },
-        { name: 'REST', value: 'rest' },
-        { name: 'gRPC', value: 'grpc' },
-        { name: 'WebSocket', value: 'websocket' },
-        { name: 'All (stmux split view)', value: 'all' },
-      ];
+  // Per-request and nanopayment only work with JSON-RPC and REST
+  const isPerRequestLike = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
+  const exampleChoices =
+    paymentModel === 'nanopayment'
+      ? [{ name: 'Nanopayment (JSON-RPC)', value: 'nanopayment' }]
+      : isPerRequestLike
+        ? [
+            { name: 'JSON-RPC', value: 'jsonrpc' },
+            { name: 'REST', value: 'rest' },
+            { name: 'All (stmux split view)', value: 'all' },
+          ]
+        : [
+            { name: 'JSON-RPC', value: 'jsonrpc' },
+            { name: 'REST', value: 'rest' },
+            { name: 'gRPC', value: 'grpc' },
+            { name: 'WebSocket', value: 'websocket' },
+            { name: 'All (stmux split view)', value: 'all' },
+          ];
 
   const example = await select<string>({
     message: 'Example to run',

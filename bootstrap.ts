@@ -88,7 +88,7 @@ async function main() {
 
   // Wallet creation (+ auth for credit drawdown) handled by createClientForChain
   const { client, paymentModel } = await createClientForChain();
-  const isPerRequest = paymentModel === 'pay-per-request';
+  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
   console.log(`   Model:  ${paymentModel}`);
 
   if (!isPerRequest) {
@@ -103,6 +103,8 @@ async function main() {
       creditsInfo = await purchaseCredits(client.fetch, getToken, network);
       console.log(`   Credits after purchase: ${creditsInfo.credits}`);
     }
+  } else if (paymentModel === 'nanopayment') {
+    console.log('   Nanopayment: no credits needed (each request pays $0.0001 via Circle Gateway)');
   } else {
     console.log('   Pay-per-request: no credits needed (each request pays $0.001)');
   }
@@ -112,11 +114,15 @@ async function main() {
 
   const env = { ...process.env, X402_BOOTSTRAPPED: '1', X402_PAYMENT_MODEL: paymentModel };
 
+  // Nanopayment: only nanopayment.ts
   // Per-request: only JSON-RPC + REST (worker rejects gRPC/WebSocket per-request)
   // Credit drawdown: all 4 protocols
-  const stmuxLayout = isPerRequest
-    ? '[ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ]'
-    : '[ [ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ] : [ -t WebSocket "npx tsx websocket.ts" .. -t gRPC "npx tsx grpc.ts" ] ]';
+  const stmuxLayout =
+    paymentModel === 'nanopayment'
+      ? '[ -t Nanopayment "npx tsx nanopayment.ts" ]'
+      : isPerRequest
+        ? '[ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ]'
+        : '[ [ -t JSONRPC "npx tsx jsonrpc.ts" .. -t REST "npx tsx rest.ts" ] : [ -t WebSocket "npx tsx websocket.ts" .. -t gRPC "npx tsx grpc.ts" ] ]';
 
   execSync(`npx --yes stmux -- ${stmuxLayout}`, {
     stdio: 'inherit',
