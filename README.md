@@ -57,7 +57,7 @@ flowchart TB
 | `rest.ts` | REST | Aptos Mainnet | HTTP GET endpoints (ledger info, blocks, accounts, transactions) |
 | `grpc.ts` | gRPC-Web | Flow Mainnet | Unary calls (Ping, GetLatestBlock) + streaming (SubscribeBlocksFromLatest) |
 | `websocket.ts` | WebSocket | Base Mainnet | Real-time `newHeads` subscription with non-blocking credit polling |
-| `nanopayment.ts` | JSON-RPC | Base Sepolia | Circle Gateway nanopayment loop ($0.0001/request) |
+| `nanopayment.ts` | JSON-RPC | Base Sepolia (default) | Circle Gateway nanopayment loop ($0.0001/request). Supports Base Sepolia, Polygon Amoy, Arc Testnet, Base Mainnet, Polygon Mainnet. |
 
 ## How It Works
 
@@ -154,6 +154,18 @@ X402_EVM_CHAIN=arc-testnet npm start
 
 # Or run nanopayment example specifically
 X402_EVM_CHAIN=arc-testnet npm run start:nanopayment
+```
+
+### Mainnet Nanopayments (Base / Polygon)
+
+> Real USDC is spent. First run will auto-deposit up to 0.5 USDC from your wallet into the Circle Gateway Wallet contract.
+
+```bash
+# Base Mainnet ($0.0001/request, settled via Circle Gateway)
+X402_EVM_CHAIN=base-mainnet npm run start:nanopayment
+
+# Polygon Mainnet ($0.0001/request, settled via Circle Gateway)
+X402_EVM_CHAIN=polygon-mainnet npm run start:nanopayment
 ```
 
 ### Solana
@@ -396,7 +408,7 @@ Use `paymentModel: 'credit-drawdown'` (default) or omit `paymentModel`. Ideal fo
 3. **Batch Settlement** -- Payments are batched and settled via Circle Gateway at $0.0001/request
 4. **Response** -- Includes `PAYMENT-RESPONSE` header confirming payment
 
-Use `paymentModel: 'nanopayment'` in the client config. EVM testnets only (Base Sepolia, Polygon Amoy, Arc Testnet).
+Use `paymentModel: 'nanopayment'` in the client config. EVM only — supported on Base Sepolia, Polygon Amoy, Arc Testnet, Base Mainnet, and Polygon Mainnet. Mainnet runs spend real USDC; the default auto-deposit flow will pull up to 0.5 USDC from your wallet into the Gateway Wallet contract on first run.
 
 All flows are handled automatically by the `@quicknode/x402` client — you just make fetch calls!
 

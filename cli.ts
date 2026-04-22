@@ -60,7 +60,13 @@ async function resolveConfig(): Promise<CliConfig> {
   // - Solana: no nanopayment (not supported)
   // - Other EVM: all options
   const NANOPAYMENT_ONLY_CHAINS = new Set(['arc-testnet']);
-  const NANOPAYMENT_ELIGIBLE_CHAINS = new Set(['base-sepolia', 'polygon-amoy', 'arc-testnet']);
+  const NANOPAYMENT_ELIGIBLE_CHAINS = new Set([
+    'base-sepolia',
+    'polygon-amoy',
+    'arc-testnet',
+    'base-mainnet',
+    'polygon-mainnet',
+  ]);
 
   type PaymentModelChoice = {
     name: string;
@@ -88,7 +94,7 @@ async function resolveConfig(): Promise<CliConfig> {
       ...(chainType === 'evm' && NANOPAYMENT_ELIGIBLE_CHAINS.has(chainSlug)
         ? [
             {
-              name: 'Nanopayment ($0.0001/request, Circle Gateway, EVM testnets only)',
+              name: 'Nanopayment ($0.0001/request, Circle Gateway)',
               value: 'nanopayment' as const,
             },
           ]
